@@ -27,6 +27,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { installFakeAudio } from '../test/fakeAudio'
+import { installFakeMediaSession } from '../test/fakeMediaSession'
 import { setupMockURL, createMockSpeechSynthesis } from '../test/svelteRunesTestUtils'
 import type { AudioSegment } from './types/audio'
 import type { Chapter } from './types/book'
@@ -42,6 +43,8 @@ vi.mock('./libraryDB', () => ({
   getChapterSegments: async () => dbState.segments,
   getChapterAudio: async () => dbState.mergedAudio,
   saveChapterSegments: async () => {},
+  // Pulled in transitively by bookStore, which the service reads for cover art.
+  getBookGenerationStatus: async () => new Set<string>(),
 }))
 
 // Neutralise real TTS: no worker is spawned, generation always succeeds fast.
@@ -59,6 +62,14 @@ async function freshService(): Promise<AudioService> {
   vi.resetModules()
   const mod = await import('./audioPlaybackService.svelte')
   return mod.audioService
+}
+
+/**
+ * The book store instance belonging to the current module registry — i.e. the
+ * same one the service just imported. Call only after `freshService()`.
+ */
+async function currentBookStore() {
+  return (await import('../stores/bookStore')).book
 }
 
 function makeChapter(sentences: string[]): Chapter {
@@ -97,10 +108,12 @@ async function initWithAudio(service: AudioService, sentences: string[]): Promis
 
 describe('audioPlaybackService — current playback behaviour', () => {
   let audio: ReturnType<typeof installFakeAudio>
+  let media: ReturnType<typeof installFakeMediaSession>
 
   beforeEach(() => {
     setupMockURL()
     audio = installFakeAudio()
+    media = installFakeMediaSession()
     // jsdom implements neither media playback nor the Web Speech API; the
     // service touches speechSynthesis on every stop().
     Object.defineProperty(window, 'speechSynthesis', {
@@ -114,6 +127,7 @@ describe('audioPlaybackService — current playback behaviour', () => {
 
   afterEach(() => {
     audio.restore()
+    media.restore()
     vi.restoreAllMocks()
   })
 
@@ -436,40 +450,185 @@ describe('audioPlaybackService — current playback behaviour', () => {
   })
 
   // --------------------------------------------------------------------------
-  // 6. Media Session — pins the absence
+  // 6. Media Session — the OS integration that makes lock-screen listening work
   // --------------------------------------------------------------------------
 
-  describe('Media Session integration', () => {
-    /**
-     * PINS A KNOWN GAP — see docs/PHONE_FIRST_AUDIT.md §4.1.
-     * Nothing in the service touches `navigator.mediaSession`, so Android
-     * Chrome gets no lock-screen controls, no metadata and no hardware/
-     * Bluetooth button handling. Replace this test when that is implemented:
-     * assert metadata, the action handlers, and setPositionState instead.
-     */
-    it('does not currently declare a media session', async () => {
-      const setActionHandler = vi.fn()
-      const setPositionState = vi.fn()
-      const mediaSession = {
-        metadata: null,
-        playbackState: 'none',
-        setActionHandler,
-        setPositionState,
-      }
-      Object.defineProperty(navigator, 'mediaSession', {
-        value: mediaSession,
-        configurable: true,
-        writable: true,
+  describe('Media Session', () => {
+    async function loadMerged(service: AudioService, sentences: string[]) {
+      dbState.segments = sentences.map((text, i) => makeSegment(i, text))
+      dbState.mergedAudio = new Blob(['merged'], { type: 'audio/wav' })
+      return service.loadChapter(1, 'Dune', makeChapter(sentences))
+    }
+
+    it('publishes the chapter and book when a chapter loads', async () => {
+      const service = await freshService()
+      await loadMerged(service, ['One.', 'Two.'])
+
+      expect(media.session.metadata).toMatchObject({
+        title: 'Chapter One',
+        album: 'Dune',
+      })
+    })
+
+    it('publishes the author and cover from the loaded book', async () => {
+      const service = await freshService()
+      const bookStore = await currentBookStore()
+      bookStore.set({
+        title: 'Dune',
+        author: 'Frank Herbert',
+        cover: 'blob:cover-art',
+        chapters: [],
       })
 
-      const service = await freshService()
-      await initWithAudio(service, ['One.', 'Two.'])
-      await service.playFromSegment(0)
+      await loadMerged(service, ['One.', 'Two.'])
 
-      expect(mediaSession.metadata).toBeNull()
-      expect(setActionHandler).not.toHaveBeenCalled()
-      expect(setPositionState).not.toHaveBeenCalled()
-      expect(mediaSession.playbackState).toBe('none')
+      expect(media.session.metadata).toMatchObject({
+        artist: 'Frank Herbert',
+      })
+      expect(media.session.metadata?.artwork?.[0]?.src).toBe('blob:cover-art')
+    })
+
+    it('registers the transport controls', async () => {
+      const service = await freshService()
+      await loadMerged(service, ['One.', 'Two.'])
+
+      for (const action of [
+        'play',
+        'pause',
+        'stop',
+        'seekbackward',
+        'seekforward',
+        'previoustrack',
+        'nexttrack',
+        'seekto',
+      ]) {
+        expect(media.hasHandler(action)).toBe(true)
+      }
+    })
+
+    it('reflects play and pause in the OS playback state', async () => {
+      const service = await freshService()
+      await loadMerged(service, ['One.', 'Two.'])
+
+      await service.play()
+      expect(media.session.playbackState).toBe('playing')
+
+      service.pause()
+      expect(media.session.playbackState).toBe('paused')
+    })
+
+    it('publishes the scrub position, including playback rate', async () => {
+      const service = await freshService()
+      await loadMerged(service, ['One.', 'Two.'])
+
+      const element = audio.latest()
+      element.duration = 30
+      service.setSpeed(1.5)
+      element.tick(12)
+
+      expect(media.latestPosition()).toEqual({
+        duration: 30,
+        position: 12,
+        playbackRate: 1.5,
+      })
+    })
+
+    it('throttles position updates to one a second', async () => {
+      const service = await freshService()
+      await loadMerged(service, ['One.', 'Two.'])
+      const element = audio.latest()
+      element.duration = 30
+
+      element.tick(5.0)
+      const afterFirst = media.setPositionState.mock.calls.length
+
+      element.tick(5.25)
+      element.tick(5.5)
+      element.tick(5.75)
+      expect(media.setPositionState.mock.calls.length).toBe(afterFirst)
+
+      element.tick(6.0)
+      expect(media.setPositionState.mock.calls.length).toBe(afterFirst + 1)
+    })
+
+    describe('OS controls drive playback', () => {
+      it('play and pause', async () => {
+        const service = await freshService()
+        await loadMerged(service, ['One.', 'Two.'])
+
+        media.trigger('play')
+        await Promise.resolve()
+        expect(service.isPlaying).toBe(true)
+
+        media.trigger('pause')
+        expect(service.isPlaying).toBe(false)
+      })
+
+      it('seek forward and back by the offset the OS asks for', async () => {
+        const service = await freshService()
+        await loadMerged(service, ['One.', 'Two.'])
+
+        const element = audio.latest()
+        element.duration = 100
+        element.currentTime = 50
+
+        media.trigger('seekforward', { seekOffset: 30 })
+        expect(element.currentTime).toBe(80)
+
+        media.trigger('seekbackward', { seekOffset: 15 })
+        expect(element.currentTime).toBe(65)
+      })
+
+      it('absolute seek from the scrub bar', async () => {
+        const service = await freshService()
+        await loadMerged(service, ['One.', 'Two.'])
+
+        const element = audio.latest()
+        element.duration = 100
+
+        media.trigger('seekto', { seekTime: 42 })
+        expect(element.currentTime).toBe(42)
+      })
+
+      it('clamps an absolute seek to the media bounds', async () => {
+        const service = await freshService()
+        await loadMerged(service, ['One.', 'Two.'])
+
+        const element = audio.latest()
+        element.duration = 100
+
+        media.trigger('seekto', { seekTime: 500 })
+        expect(element.currentTime).toBe(100)
+
+        media.trigger('seekto', { seekTime: -20 })
+        expect(element.currentTime).toBe(0)
+      })
+
+      it('next and previous move between segments', async () => {
+        const service = await freshService()
+        await initWithAudio(service, ['One.', 'Two.', 'Three.'])
+        await service.playFromSegment(0)
+
+        media.trigger('nexttrack')
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(service.currentSegmentIndex).toBe(1)
+
+        media.trigger('previoustrack')
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(service.currentSegmentIndex).toBe(0)
+      })
+    })
+
+    it('tears the session down on stop, so no stale controls linger', async () => {
+      const service = await freshService()
+      await loadMerged(service, ['One.', 'Two.'])
+      await service.play()
+
+      service.stop()
+
+      expect(media.session.metadata).toBeNull()
+      expect(media.session.playbackState).toBe('none')
+      expect(media.hasHandler('play')).toBe(false)
     })
   })
 })
