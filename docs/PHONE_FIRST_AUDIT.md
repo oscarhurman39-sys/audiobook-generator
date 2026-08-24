@@ -174,54 +174,67 @@ exactly what needs measuring on the actual device.
 
 ---
 
-## 5. What I'd do, in order
+## 5. What shipped
 
-Each step is small enough to ship and verify on its own.
+All six steps are implemented on `claude/new-session-26dft1`, one commit each.
 
-1. **Media Session integration.** Wire `navigator.mediaSession` metadata (title,
-   chapter, cover), `play`/`pause`/`seekbackward`/`seekforward`/`previoustrack`/
-   `nexttrack` handlers, and `setPositionState` into
-   `audioPlaybackService.svelte.ts`. Unit-test the handler wiring with a stubbed
-   `navigator.mediaSession`. **Then test on the actual Android phone** — this
-   step is not done until screen-off playback is confirmed by hand.
-2. **Fix the adaptive-quality voice override.** Thread the effective voice into
-   `resolveTierLadder()`, keeping quantization/device as the only tier variables.
-   Regression test: a `bf_emma` selection produces `bf_emma` at every tier.
-3. **Player controls.** Configurable 15/30s jump, sleep timer, end-of-chapter
-   auto-advance. Auto-advance needs care — `onended` is deliberately a no-op, so
-   the change belongs behind an explicit setting.
-4. **"Continue listening" card** on the landing/library screen, reading from the
-   existing `progressStore`.
-5. **Voice audition screen** — group by accent using the `bf_`/`bm_` prefixes
-   already in `voiceSelector.ts`, add a short preview sample per voice, persist
-   the choice per book.
-6. **PWA polish** — add the two missing icon assets, add a maskable icon, review
-   the 56 MB precache.
+1. **Media Session** (§4.1) — `src/lib/services/mediaSessionService.ts`, wired
+   into `audioPlaybackService`. Metadata (chapter, book, author, cover),
+   the full transport handler set, playback state, and position state throttled
+   to 1 Hz. Position is chapter-scoped in merged-audio mode and sentence-scoped
+   in per-segment mode; that limitation is documented at the call site.
+2. **Adaptive-quality voice override** (§4.2) — the tier ladder now carries the
+   chosen voice. Kokoro tiers vary only quantization; an explicitly chosen Piper
+   voice collapses the ladder to its own quality tier so no upgrade swaps the
+   narrator.
+3. **Player controls** (§4.3) — configurable 10/15/30s jump (defaulting to 15,
+   and shared with the lock-screen buttons), a sleep timer with minute presets
+   and an end-of-chapter mode, and chapter continuation via
+   `setChapterEndHandler`. The service reports the end; the reader, which owns
+   chapter order, decides what follows.
+4. **Continue listening** (§4.4) — `ContinueListening.svelte` on the library
+   screen, reading the most recent saved position and resuming straight into the
+   reader at that chapter.
+5. **Voice audition** (§4.5) — voices grouped by accent with British first,
+   named rather than shown as raw IDs, each previewable, and committed to a whole
+   book in one transaction.
+6. **PWA polish** (§4.6) — the two missing icon assets, a maskable icon, matched
+   theme colours, and precache down from 56 MB to 11 MB by moving the ONNX
+   runtimes to runtime caching.
 
-Phases 5 (narration quality) and 6 (cloud provider) of the plan stay parked
-until the above is real on the phone.
+### Still open
+
+- **Real-device testing.** Everything above is verified by unit tests in jsdom.
+  Android Chrome behaviour — background audio with the screen off, lock-screen
+  controls, storage limits, memory under Kokoro — is **`[Unverified]`** and can
+  only be settled on the phone.
+- **Phases 5 and 6 of the plan** (narration quality, cloud provider) remain
+  parked, as intended.
+- **The third `onended` path.** `playSingleSegment` chains progressively
+  generated segments via `segmentProgressStore` and is not covered by the
+  behaviour tests; it also does not report chapter end, so auto-advance does not
+  apply to that path.
+- **`audioPlaybackService.svelte.test.ts`** still contains four `it.fails`
+  blocks asserting against local re-implementations rather than the service.
+  They document suspected bugs but prove nothing about the real code.
 
 ## 6. Harness note
 
-Steps 1 and 3 change playback behaviour, which the unit suite covered only
-partially. That is now addressed: `src/lib/audioPlaybackService.behavior.test.ts`
-holds 22 characterization tests driving the real service, and
-`src/test/fakeAudio.ts` provides the controllable `HTMLAudioElement` stand-in
-they need.
+Playback behaviour is covered by `src/lib/audioPlaybackService.behavior.test.ts`
+driving the real service, with `src/test/fakeAudio.ts` and
+`src/test/fakeMediaSession.ts` as the controllable stand-ins jsdom lacks.
 
-Two things that made this possible are worth recording:
+Two things are worth recording:
 
 - `vitest.config.ts` did not load `@sveltejs/vite-plugin-svelte`, so `.svelte.ts`
   modules were never compiled and their runes blew up on import. Adding the
-  plugin makes the service (and any other runes module) directly testable. The
-  previous claim in `audioPlaybackService.svelte.test.ts` that the service
-  "cannot be unit tested in isolation" was a consequence of that missing
-  plugin, not of Svelte 5.
-- The scaffold deliberately pins the two gaps above as _current behaviour_ —
-  playback stopping at the end of a chapter (§4.3), and nothing touching
-  `navigator.mediaSession` (§4.1). Those tests are designed to fail when the
-  feature lands, so the author has to update the pin on purpose rather than
-  drift past it.
+  plugin makes the service — and any other runes module — directly testable. The
+  previous claim that the service "cannot be unit tested in isolation" was a
+  consequence of that missing plugin, not of Svelte 5.
+- Each fix was mutation-checked rather than assumed: naive chapter auto-advance,
+  a dropped `skip()` clamp, an off-by-one in merged-audio tracking, a removed
+  media-session setup call, and a restored hard-coded voice each fail the tests
+  that claim to cover them.
 
-Verified by mutation: naive chapter auto-advance, a dropped `skip()` clamp, and
-an off-by-one in merged-audio segment tracking each fail exactly one test.
+Suite at the end of this work: 749 passing, lint clean, type-check and build
+clean.
