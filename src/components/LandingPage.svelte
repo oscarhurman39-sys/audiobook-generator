@@ -1,6 +1,7 @@
 <script lang="ts">
   import UnifiedInput from './UnifiedInput.svelte'
   import LibraryView from './LibraryView.svelte'
+  import ContinueListening from './ContinueListening.svelte'
   import OnboardingBanner from './OnboardingBanner.svelte'
   import { onMount } from 'svelte'
   import { getBook, updateLastAccessed } from '../lib/libraryDB'
@@ -20,6 +21,7 @@
       sourceUrl?: string
       fromLibrary?: boolean
       libraryId?: number
+      resumeChapterId?: string
     }) => void
     onopensettings: () => void
   } = $props()
@@ -57,7 +59,7 @@
     onbookloaded(detail)
   }
 
-  async function handleLibraryBookSelected(bookId: number) {
+  async function handleLibraryBookSelected(bookId: number, resumeChapterId?: string) {
     try {
       // Load book from library
       const libraryBook = await getBook(bookId)
@@ -77,6 +79,7 @@
           },
           fromLibrary: true,
           libraryId: bookId,
+          resumeChapterId,
         })
       }
     } catch (err) {
@@ -149,6 +152,9 @@
           id="library-panel"
           aria-labelledby="library-tab"
         >
+          <ContinueListening
+            oncontinue={(bookId, chapterId) => handleLibraryBookSelected(bookId, chapterId)}
+          />
           <LibraryView onbookselected={handleLibraryBookSelected} />
         </div>
       {/if}

@@ -206,6 +206,8 @@
     sourceUrl?: string
     fromLibrary?: boolean
     libraryId?: number
+    /** Set when resuming from the "Continue listening" card. */
+    resumeChapterId?: string
   }) {
     const b = detail.book
     if (b) {
@@ -260,7 +262,17 @@
         }
       }
 
-      currentView = 'book'
+      // Resuming goes straight back to where the listener left off, rather
+      // than making them walk the chapter list again.
+      const resumeChapter = detail.resumeChapterId
+        ? detectedBook.chapters?.find((c: Chapter) => c.id === detail.resumeChapterId)
+        : undefined
+
+      if (resumeChapter) {
+        navigateToReader(resumeChapter)
+      } else {
+        currentView = 'book'
+      }
 
       // Auto-generate on new imports only (not when reopening library books)
       if (!detail.fromLibrary && detectedBook.chapters?.length > 0) {
