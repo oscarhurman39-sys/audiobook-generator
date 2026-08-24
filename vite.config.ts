@@ -12,25 +12,59 @@ export default defineConfig({
         name: 'Audiobook Generator',
         short_name: 'AudiobookGen',
         description: 'Generate audiobooks from eBooks locally.',
-        theme_color: '#ffffff',
+        // Matches the icon's own blue, so the splash screen and address bar
+        // don't flash white before the app paints.
+        theme_color: '#0b57f9',
+        background_color: '#0b57f9',
+        display: 'standalone',
+        orientation: 'portrait',
+        categories: ['books', 'education', 'entertainment'],
         icons: [
           {
             src: 'pwa-192x192.png',
             sizes: '192x192',
             type: 'image/png',
+            purpose: 'any',
           },
           {
             src: 'pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            // Android masks icons to its own shape and only guarantees the
+            // inner 80%; without this the home-screen icon gets letterboxed.
+            src: 'maskable-icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
       workbox: {
-        // Raised to cover large WASM chunks (Kokoro/Piper can be 50-200 MB each)
-        maximumFileSizeToCacheInBytes: 250 * 1024 * 1024,
+        // The ONNX runtimes are ~26 MB and ~22 MB, and only one of the two is
+        // ever used on a given device — precaching both meant a ~56 MB install
+        // over mobile data before the first book could be opened. The app shell
+        // is precached; the runtimes are fetched on first use and cached then.
+        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,webmanifest}'],
+        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         clientsClaim: true,
         skipWaiting: false,
+        runtimeCaching: [
+          {
+            urlPattern: /\.(?:wasm|onnx)$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'tts-runtime',
+              expiration: {
+                maxEntries: 8,
+                maxAgeSeconds: 60 * 60 * 24 * 90,
+              },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
   ],
