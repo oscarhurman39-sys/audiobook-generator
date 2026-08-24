@@ -268,7 +268,8 @@
                   () => audioService.currentSegmentIndex,
                   (upgraded) =>
                     audioService.replaceSegmentAudio(upgraded.index, upgraded.audioBlob),
-                  aqSettings.upgradePlayedSegments
+                  aqSettings.upgradePlayedSegments,
+                  localVoice
                 )
               }
 
@@ -436,7 +437,9 @@
           audioService.playFromSegment(segment.index)
         }
       },
-      aqSettings.skipWebSpeech
+      aqSettings.skipWebSpeech,
+      undefined,
+      localVoice
     )
 
     if (scheduleUpgrade) {
@@ -447,7 +450,8 @@
         piperVoiceList,
         () => audioService.currentSegmentIndex,
         (upgraded) => audioService.replaceSegmentAudio(upgraded.index, upgraded.audioBlob),
-        aqSettings.upgradePlayedSegments
+        aqSettings.upgradePlayedSegments,
+        localVoice
       )
     }
   }
