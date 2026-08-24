@@ -203,8 +203,25 @@ until the above is real on the phone.
 
 ## 6. Harness note
 
-Steps 1 and 3 change playback behaviour, which the unit suite covers only
-partially (`audioPlaybackService.svelte.test.ts` is 314 lines against a 1291-line
-service). Before changing playback, extend that test file to cover the current
-`onended` / segment-chaining behaviour, so a regression is caught by the suite
-rather than by a book stopping silently at the end of a chapter.
+Steps 1 and 3 change playback behaviour, which the unit suite covered only
+partially. That is now addressed: `src/lib/audioPlaybackService.behavior.test.ts`
+holds 22 characterization tests driving the real service, and
+`src/test/fakeAudio.ts` provides the controllable `HTMLAudioElement` stand-in
+they need.
+
+Two things that made this possible are worth recording:
+
+- `vitest.config.ts` did not load `@sveltejs/vite-plugin-svelte`, so `.svelte.ts`
+  modules were never compiled and their runes blew up on import. Adding the
+  plugin makes the service (and any other runes module) directly testable. The
+  previous claim in `audioPlaybackService.svelte.test.ts` that the service
+  "cannot be unit tested in isolation" was a consequence of that missing
+  plugin, not of Svelte 5.
+- The scaffold deliberately pins the two gaps above as _current behaviour_ —
+  playback stopping at the end of a chapter (§4.3), and nothing touching
+  `navigator.mediaSession` (§4.1). Those tests are designed to fail when the
+  feature lands, so the author has to update the pin on purpose rather than
+  drift past it.
+
+Verified by mutation: naive chapter auto-advance, a dropped `skip()` clamp, and
+an off-by-one in merged-audio segment tracking each fail exactly one test.

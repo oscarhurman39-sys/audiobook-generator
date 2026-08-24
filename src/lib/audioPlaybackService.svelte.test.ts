@@ -3,43 +3,24 @@ import { setupMockURL } from '../test/svelteRunesTestUtils'
 import { createMockTTSWorkerManager, createMockWavBlob } from '../test/ttsClientMocks'
 
 /**
- * Tests for audioPlaybackService
+ * Tests for audioPlaybackService — URL lifecycle, mock plumbing, and a set of
+ * `it.fails` notes documenting suspected bugs.
  *
- * IMPLEMENTATION NOTE:
- * The audioPlaybackService uses Svelte runes ($state) which are only available
- * in .svelte and .svelte.ts files at the class definition level. However, when
- * instantiated outside a Svelte component context, the runes cannot be initialized.
+ * NOTE ON SCOPE:
+ * An earlier version of this file stated that the service "cannot be unit
+ * tested in isolation" because of Svelte runes. That is no longer accurate:
+ * `vitest.config.ts` now loads `@sveltejs/vite-plugin-svelte`, which compiles
+ * `.svelte.ts` modules, so the service imports and runs under Vitest.
  *
- * Therefore, we cannot unit test this service directly in isolation. Instead,
- * this behavior is covered by:
- * 1. E2E tests in e2e/**\/*.spec.ts that test cross-chapter isolation via the UI
- * 2. Code inspection verifying that stop() calls audioPlayerStore.clearAudioSegments()
- *    and sets this.segments = [] to prevent audio bleed between chapters
+ * Real behavioural coverage — segment chaining, end-of-chapter handling, skip
+ * semantics, teardown — lives in `audioPlaybackService.behavior.test.ts`.
+ * Cross-chapter isolation is covered there by the `stop()` tests.
  *
- * The safeguards are in place:
- * - stop() clears audioSegments Map
- * - stop() calls audioPlayerStore.clearAudioSegments()
- * - stop() clears this.segments array
- * - loadChapter() calls this.stop() at the beginning
+ * The `it.fails` blocks below assert against local re-implementations rather
+ * than the service itself. They are kept as documentation of the suspected
+ * issues, but they do not prove anything about the real code; anything relying
+ * on them should be rewritten against the service.
  */
-describe('audioPlaybackService cross-chapter isolation', () => {
-  it('safeguards are implemented to prevent audio bleed between chapters', () => {
-    // This test serves as a marker/reminder that the following safeguards
-    // are implemented in audioPlaybackService:
-    //
-    // 1. In stop() method:
-    //    - audioPlayerStore.clearAudioSegments() to clear store cache
-    //    - this.segments = [] to clear in-memory segments
-    //    - All blob URLs are revoked via URL.revokeObjectURL()
-    //
-    // 2. In loadChapter() method:
-    //    - Calls this.stop() at the beginning to reset state
-    //
-    // See e2e tests for full cross-chapter switching behavior validation
-    expect(true).toBe(true)
-  })
-})
-
 // ============================================================================
 // URL MANAGEMENT TESTS
 // These test URL lifecycle without needing the actual service
