@@ -21,11 +21,23 @@ export interface AdaptiveQualitySettings {
   upgradePlayedSegments: boolean
 }
 
+/** Jump sizes offered by the player. 15s and 30s are the audiobook conventions. */
+export type SkipSeconds = 10 | 15 | 30
+
+export interface PlaybackSettings {
+  /** Size of the back/forward jump buttons, in seconds */
+  skipSeconds: SkipSeconds
+  /** Continue into the next chapter when the current one finishes */
+  autoAdvanceChapters: boolean
+}
+
 export interface AppSettings {
   /** Per-language model/voice defaults keyed by ISO 639-1 code */
   languageDefaults: Record<string, LanguageDefault>
   /** Adaptive quality TTS settings */
   adaptiveQuality: AdaptiveQualitySettings
+  /** Player behaviour */
+  playback: PlaybackSettings
 }
 
 const DEFAULT_ADAPTIVE_QUALITY: AdaptiveQualitySettings = {
@@ -34,9 +46,15 @@ const DEFAULT_ADAPTIVE_QUALITY: AdaptiveQualitySettings = {
   upgradePlayedSegments: true,
 }
 
+const DEFAULT_PLAYBACK: PlaybackSettings = {
+  skipSeconds: 15,
+  autoAdvanceChapters: true,
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   languageDefaults: {},
   adaptiveQuality: DEFAULT_ADAPTIVE_QUALITY,
+  playback: DEFAULT_PLAYBACK,
 }
 
 function loadSettings(): AppSettings {
@@ -55,6 +73,10 @@ function loadSettings(): AppSettings {
         adaptiveQuality: {
           ...DEFAULT_ADAPTIVE_QUALITY,
           ...(parsed.adaptiveQuality ?? {}),
+        },
+        playback: {
+          ...DEFAULT_PLAYBACK,
+          ...(parsed.playback ?? {}),
         },
       }
     }
@@ -104,6 +126,16 @@ function createAppSettingsStore() {
     /** Get defaults for a language (returns undefined fields if not set) */
     getLanguageDefault(settings: AppSettings, langCode: string): LanguageDefault | undefined {
       return settings.languageDefaults[langCode]
+    },
+
+    /** Set the size of the player's back/forward jump buttons */
+    setSkipSeconds(skipSeconds: SkipSeconds) {
+      update((s) => ({ ...s, playback: { ...s.playback, skipSeconds } }))
+    },
+
+    /** Toggle continuing into the next chapter at the end of the current one */
+    setAutoAdvanceChapters(autoAdvanceChapters: boolean) {
+      update((s) => ({ ...s, playback: { ...s.playback, autoAdvanceChapters } }))
     },
 
     /** Reset all settings to defaults */

@@ -199,12 +199,11 @@ describe('audioPlaybackService — current playback behaviour', () => {
     })
 
     /**
-     * PINS A KNOWN GAP — see docs/PHONE_FIRST_AUDIT.md §4.3.
-     * At the end of the last segment the service stops. It does not load or
-     * start the following chapter, and exposes no hook for doing so.
-     * Auto-advance work must replace this test rather than delete it.
+     * The service stops at the end of a chapter and reports it. Deciding what
+     * comes next belongs to the reader, which owns chapter order — see the
+     * "chapter end handler" tests below.
      */
-    it('stops at the end of the chapter instead of advancing to the next one', async () => {
+    it('stops at the end of the chapter rather than loading the next itself', async () => {
       const service = await freshService()
       await initWithAudio(service, ['One.', 'Two.'])
 
@@ -252,8 +251,8 @@ describe('audioPlaybackService — current playback behaviour', () => {
       expect(service.currentSegmentIndex).toBe(2)
     })
 
-    /** PINS THE SAME GAP as above, on the merged-audio path. */
-    it('stops at the end of the file instead of advancing to the next chapter', async () => {
+    /** Same contract on the merged-audio path. */
+    it('stops at the end of the file rather than loading the next chapter itself', async () => {
       const service = await freshService()
       await loadMerged(service, ['One.', 'Two.'])
       await service.play()
@@ -450,7 +449,93 @@ describe('audioPlaybackService — current playback behaviour', () => {
   })
 
   // --------------------------------------------------------------------------
-  // 6. Media Session — the OS integration that makes lock-screen listening work
+  // 6. Chapter end callback — how auto-advance is driven
+  // --------------------------------------------------------------------------
+
+  describe('chapter end handler', () => {
+    it('fires when the last segment finishes', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      await initWithAudio(service, ['One.', 'Two.'])
+      await service.playFromSegment(1)
+      audio.latest().end()
+
+      expect(onChapterEnd).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not fire on an ordinary segment boundary', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      await initWithAudio(service, ['One.', 'Two.', 'Three.'])
+      await service.playFromSegment(0)
+      audio.latest().end()
+
+      expect(service.currentSegmentIndex).toBe(1)
+      expect(onChapterEnd).not.toHaveBeenCalled()
+    })
+
+    it('does not fire when the listener paused mid-chapter', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      await initWithAudio(service, ['One.', 'Two.', 'Three.'])
+      await service.playFromSegment(0)
+      const playing = audio.latest()
+      service.pause()
+      playing.end()
+
+      expect(onChapterEnd).not.toHaveBeenCalled()
+    })
+
+    it('fires at the end of merged chapter audio', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      dbState.segments = ['One.', 'Two.'].map((text, i) => makeSegment(i, text))
+      dbState.mergedAudio = new Blob(['merged'], { type: 'audio/wav' })
+      await service.loadChapter(1, 'Test Book', makeChapter(['One.', 'Two.']))
+
+      await service.play()
+      audio.latest().end()
+
+      expect(onChapterEnd).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops firing once unregistered', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+      service.setChapterEndHandler(null)
+
+      await initWithAudio(service, ['One.'])
+      await service.playFromSegment(0)
+      audio.latest().end()
+
+      expect(onChapterEnd).not.toHaveBeenCalled()
+    })
+
+    it('survives a handler that throws', async () => {
+      const service = await freshService()
+      service.setChapterEndHandler(() => {
+        throw new Error('reader exploded')
+      })
+
+      await initWithAudio(service, ['One.'])
+      await service.playFromSegment(0)
+
+      expect(() => audio.latest().end()).not.toThrow()
+      expect(service.isPlaying).toBe(false)
+    })
+  })
+
+  // --------------------------------------------------------------------------
+  // 7. Media Session — the OS integration that makes lock-screen listening work
   // --------------------------------------------------------------------------
 
   describe('Media Session', () => {

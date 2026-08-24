@@ -126,8 +126,14 @@ export function setMediaPositionState(state: MediaPositionState | null): void {
 /**
  * Register transport handlers. Actions the browser does not support throw on
  * assignment, so each is set independently and failures are ignored.
+ *
+ * `defaultSeekOffset` is used when the OS asks for a jump without naming a
+ * size, so the lock-screen buttons match the size configured in the app.
  */
-export function registerMediaHandlers(handlers: MediaSessionHandlers): void {
+export function registerMediaHandlers(
+  handlers: MediaSessionHandlers,
+  defaultSeekOffset: number = DEFAULT_SEEK_OFFSET
+): void {
   const session = getSession()
   if (!session || typeof session.setActionHandler !== 'function') return
 
@@ -141,10 +147,8 @@ export function registerMediaHandlers(handlers: MediaSessionHandlers): void {
 
   set('play', () => handlers.play())
   set('pause', () => handlers.pause())
-  set('seekbackward', (details) =>
-    handlers.seekBackward(details?.seekOffset ?? DEFAULT_SEEK_OFFSET)
-  )
-  set('seekforward', (details) => handlers.seekForward(details?.seekOffset ?? DEFAULT_SEEK_OFFSET))
+  set('seekbackward', (details) => handlers.seekBackward(details?.seekOffset ?? defaultSeekOffset))
+  set('seekforward', (details) => handlers.seekForward(details?.seekOffset ?? defaultSeekOffset))
   set('stop', handlers.stop ? () => handlers.stop!() : null)
   set('previoustrack', handlers.previousTrack ? () => handlers.previousTrack!() : null)
   set('nexttrack', handlers.nextTrack ? () => handlers.nextTrack!() : null)

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import { audioService } from './lib/audioPlaybackService.svelte'
+  import { sleepTimer } from './stores/sleepTimerStore'
   import { fade } from 'svelte/transition'
 
   // Components
@@ -120,6 +122,10 @@
   // Preload Piper voices on mount for language-based selection
   onMount(() => {
     loadPiperVoices()
+
+    // The sleep timer owns the countdown; stopping is the player's job.
+    sleepTimer.setExpiryHandler(() => audioService.pause())
+    return () => sleepTimer.setExpiryHandler(null)
   })
 
   // Reactive Voice Updater
@@ -444,6 +450,7 @@
             selectedModel={readerModel}
             chapters={$book?.chapters ?? []}
             onBack={handleBackFromReader}
+            onChapterChange={navigateToReader}
           />
         {/if}
       </div>

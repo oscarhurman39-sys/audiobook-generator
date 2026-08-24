@@ -21,6 +21,7 @@
   import { saveProgress, loadProgress } from '../stores/progressStore'
   import { loadChapterSegmentProgress } from '../stores/segmentProgressStore'
   import { appSettings } from '../stores/appSettingsStore'
+  import { sleepTimer } from '../stores/sleepTimerStore'
   import { modelDownloadStore } from '../stores/modelDownloadStore'
   import {
     scheduleUpgradePass,
@@ -984,7 +985,25 @@
     sepia: 'Sepia',
   }
 
+  /**
+   * End of chapter. A sleep timer armed for "end of chapter" takes precedence —
+   * the listener asked to stop here, so continuing would defeat the point.
+   * Otherwise continue into the next chapter if the setting allows and one
+   * exists; the reader owns chapter order, the playback service does not.
+   */
+  function handleChapterEnd() {
+    if (sleepTimer.notifyChapterEnd()) return
+    if (!get(appSettings).playback.autoAdvanceChapters) return
+
+    const next = chapters[chapterIndex + 1]
+    if (!next) return
+
+    logger.info('[TextReader] Chapter finished, continuing to next', { next: next.id })
+    onChapterChange?.(next)
+  }
+
   onMount(() => {
+    audioService.setChapterEndHandler(handleChapterEnd)
     try {
       const savedTheme = localStorage.getItem(THEME_KEY)
       if (savedTheme && ['light', 'dark', 'sepia'].includes(savedTheme)) {
@@ -1141,6 +1160,7 @@
   }
 
   onDestroy(() => {
+    audioService.setChapterEndHandler(null)
     if (chapter?.id) cancelUpgrade(chapter.id)
     audioService.stop()
   })

@@ -129,6 +129,15 @@ describe('mediaSessionService', () => {
       expect(offsets).toEqual([30, -10])
     })
 
+    it('uses the app-configured offset when the OS does not specify one', () => {
+      const offsets: number[] = []
+      registerMediaHandlers({ ...noopHandlers, seekForward: (offset) => offsets.push(offset) }, 30)
+
+      media.trigger('seekforward')
+
+      expect(offsets).toEqual([30])
+    })
+
     it('falls back to the default offset when the OS does not specify one', () => {
       const offsets: number[] = []
       registerMediaHandlers({ ...noopHandlers, seekForward: (offset) => offsets.push(offset) })

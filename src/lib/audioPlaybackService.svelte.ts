@@ -12,6 +12,7 @@ import { selectPiperVoiceForLanguage, normalizeLanguageCode } from './utils/voic
 import { getGeneratedSegment, markSegmentGenerated } from '../stores/segmentProgressStore'
 import { handleModelProgress, clearModelProgress } from '../stores/modelDownloadStore'
 import { book } from '../stores/bookStore'
+import { appSettings } from '../stores/appSettingsStore'
 import {
   setMediaMetadata,
   setMediaPlaybackState,
@@ -49,6 +50,7 @@ class AudioPlaybackService {
   private chapterAudioUrl: string | null = null // Track chapter audio URL for cleanup
   private isLoadingChapter = false // Guard against concurrent loadChapter calls
   private lastMediaPositionSecond = -1 // Throttle Media Session position updates to 1 Hz
+  private chapterEndHandler: (() => void) | null = null
 
   // Configuration
   private voice = ''
@@ -432,6 +434,7 @@ class AudioPlaybackService {
       this.audio.onended = () => {
         this.isPlaying = false
         audioPlayerStore.pause()
+        this.notifyChapterEnd()
       }
 
       this.audio.onerror = (e) => {
@@ -708,16 +711,20 @@ class AudioPlaybackService {
       artwork: currentBook?.cover,
     })
 
-    registerMediaHandlers({
-      play: () => void this.play(),
-      pause: () => this.pause(),
-      stop: () => this.stop(),
-      seekBackward: (offset) => this.skip(-offset),
-      seekForward: (offset) => this.skip(offset),
-      previousTrack: () => void this.skipPrevious(),
-      nextTrack: () => void this.skipNext(),
-      seekTo: (time) => this.seekTo(time),
-    })
+    registerMediaHandlers(
+      {
+        play: () => void this.play(),
+        pause: () => this.pause(),
+        stop: () => this.stop(),
+        seekBackward: (offset) => this.skip(-offset),
+        seekForward: (offset) => this.skip(offset),
+        previousTrack: () => void this.skipPrevious(),
+        nextTrack: () => void this.skipNext(),
+        seekTo: (time) => this.seekTo(time),
+      },
+      // Lock-screen jumps match the size configured in the app.
+      get(appSettings).playback.skipSeconds
+    )
 
     this.lastMediaPositionSecond = -1
     this.updateMediaSessionPosition(true)
@@ -749,6 +756,27 @@ class AudioPlaybackService {
       position: this.audio.currentTime,
       playbackRate: this.playbackSpeed,
     })
+  }
+
+  /**
+   * Register what happens when a chapter finishes playing.
+   *
+   * The service deliberately knows nothing about books or chapter order — the
+   * reader owns that — so continuing into the next chapter is a callback rather
+   * than something decided here.
+   */
+  setChapterEndHandler(handler: (() => void) | null) {
+    this.chapterEndHandler = handler
+  }
+
+  private notifyChapterEnd() {
+    const handler = this.chapterEndHandler
+    if (!handler) return
+    try {
+      handler()
+    } catch (err) {
+      logger.error('[AudioPlayback] Chapter end handler failed', err)
+    }
   }
 
   /**
@@ -930,9 +958,11 @@ class AudioPlaybackService {
           this.cleanupOldSegments()
           this.playCurrentSegment()
         } else {
+          const reachedChapterEnd = nextIndex >= this.segments.length
           this.isPlaying = false
           audioPlayerStore.pause()
           this.disposeAudio()
+          if (reachedChapterEnd) this.notifyChapterEnd()
         }
       }
 
