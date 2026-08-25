@@ -1355,14 +1355,19 @@ class AudioPlaybackService {
           audioPlayerStore.pause()
         })
       } else {
-        // No next segment available yet — stop and let auto-play re-trigger
-        // when the next segment is generated
+        // No next segment available. Mid-chapter that just means generation
+        // hasn't caught up — stop and let auto-play re-trigger when the next
+        // segment lands. Only when this was the chapter's last segment is it a
+        // real chapter end; with no segment list loaded we can't tell, so we
+        // stay quiet rather than fire a false end.
+        const reachedChapterEnd = this.segments.length > 0 && nextIndex >= this.segments.length
         logger.info(`[Progressive] No next segment available at index ${nextIndex}, pausing`)
         this.isPlaying = false
         audioPlayerStore.pause()
         URL.revokeObjectURL(url)
         this.audioSegments.delete(segment.index)
         this.audio = null
+        if (reachedChapterEnd) this.notifyChapterEnd()
       }
     }
 

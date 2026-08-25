@@ -48,9 +48,14 @@ vi.mock('./libraryDB', () => ({
 }))
 
 // Neutralise real TTS: no worker is spawned, generation always succeeds fast.
+// Hoisted so tests can count how often (and for what) generation is requested.
+const generateVoiceMock = vi.hoisted(() =>
+  vi.fn(async (_opts: { text: string }) => new Blob(['fake-audio'], { type: 'audio/wav' }))
+)
+
 vi.mock('./ttsWorkerManager', () => ({
   getTTSWorker: () => ({
-    generateVoice: async () => new Blob(['fake-audio'], { type: 'audio/wav' }),
+    generateVoice: generateVoiceMock,
     cancelAll: () => {},
   }),
 }))
@@ -70,6 +75,11 @@ async function freshService(): Promise<AudioService> {
  */
 async function currentBookStore() {
   return (await import('../stores/bookStore')).book
+}
+
+/** Same-registry segmentProgressStore — see currentBookStore. */
+async function currentSegmentProgress() {
+  return await import('../stores/segmentProgressStore')
 }
 
 function makeChapter(sentences: string[]): Chapter {
@@ -123,6 +133,7 @@ describe('audioPlaybackService — current playback behaviour', () => {
     })
     dbState.segments = []
     dbState.mergedAudio = null
+    generateVoiceMock.mockClear()
   })
 
   afterEach(() => {
@@ -445,6 +456,134 @@ describe('audioPlaybackService — current playback behaviour', () => {
       expect(service.segments).toHaveLength(1)
       expect(service.currentSegmentIndex).toBe(0)
       expect(service.isPlaying).toBe(false)
+    })
+  })
+
+  // --------------------------------------------------------------------------
+  // 5b. Progressive single-segment playback — the third onended path
+  // --------------------------------------------------------------------------
+
+  describe('progressive playback (playSingleSegment)', () => {
+    /** Seed the progress store with generated segments so chaining can find them. */
+    async function seedStore(chapterId: string, sentences: string[], generated: number[]) {
+      const store = await currentSegmentProgress()
+      store.initChapterSegments(
+        chapterId,
+        sentences.map((text, index) => ({ index, text, id: `${chapterId}-${index}` }))
+      )
+      for (const index of generated) {
+        store.markSegmentGenerated(chapterId, makeSegment(index, sentences[index], chapterId))
+      }
+    }
+
+    it('chains to the next generated segment', async () => {
+      const service = await freshService()
+      await initWithAudio(service, ['One.', 'Two.', 'Three.'])
+      await seedStore('ch1', ['One.', 'Two.', 'Three.'], [0, 1, 2])
+
+      await service.playSingleSegment(makeSegment(0, 'One.'))
+      expect(service.currentSegmentIndex).toBe(0)
+
+      audio.latest().end()
+
+      expect(service.currentSegmentIndex).toBe(1)
+      expect(service.isPlaying).toBe(true)
+    })
+
+    it('pauses mid-chapter when the next segment is not generated yet, without claiming a chapter end', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      await initWithAudio(service, ['One.', 'Two.', 'Three.'])
+      await seedStore('ch1', ['One.', 'Two.', 'Three.'], [0])
+
+      await service.playSingleSegment(makeSegment(0, 'One.'))
+      audio.latest().end()
+
+      expect(service.isPlaying).toBe(false)
+      expect(onChapterEnd).not.toHaveBeenCalled()
+    })
+
+    it('reports a chapter end when the last segment finishes', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      await initWithAudio(service, ['One.', 'Two.'])
+      await seedStore('ch1', ['One.', 'Two.'], [0, 1])
+
+      await service.playSingleSegment(makeSegment(1, 'Two.'))
+      audio.latest().end()
+
+      expect(service.isPlaying).toBe(false)
+      expect(onChapterEnd).toHaveBeenCalledTimes(1)
+    })
+
+    it('stays quiet when the segment list is unknown, rather than firing a false end', async () => {
+      const service = await freshService()
+      const onChapterEnd = vi.fn()
+      service.setChapterEndHandler(onChapterEnd)
+
+      // No initialize: the service has no segment list to judge "last" against.
+      await service.playSingleSegment(makeSegment(5, 'Adrift.'))
+      audio.latest().end()
+
+      expect(service.isPlaying).toBe(false)
+      expect(onChapterEnd).not.toHaveBeenCalled()
+    })
+  })
+
+  // --------------------------------------------------------------------------
+  // 5c. Resource discipline — the suspicions the old toy tests only described
+  // --------------------------------------------------------------------------
+
+  describe('resource discipline', () => {
+    it('disposes the previous element before starting a new segment', async () => {
+      const service = await freshService()
+      await initWithAudio(service, ['One.', 'Two.', 'Three.'])
+
+      await service.playFromSegment(0)
+      const first = audio.latest()
+
+      await service.playFromSegment(2)
+
+      expect(first.pause).toHaveBeenCalled()
+      expect(audio.latest()).not.toBe(first)
+      expect(service.currentSegmentIndex).toBe(2)
+    })
+
+    it('generates each segment at most once when playback triggers buffering', async () => {
+      const service = await freshService()
+      // Initialize WITHOUT injecting audio, so playback has to generate.
+      await service.initialize(null, 'Test Book', makeChapter(['One.', 'Two.', 'Three.']), {
+        voice: 'bf_emma',
+        quantization: 'q8',
+      })
+
+      await service.playFromSegment(0)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      const requestedTexts = generateVoiceMock.mock.calls.map(([opts]) => opts.text)
+      expect(new Set(requestedTexts).size).toBe(requestedTexts.length)
+    })
+
+    it('revokes blob URLs left far behind the playhead while chaining', async () => {
+      const urls = setupMockURL()
+      const service = await freshService()
+      const sentences = Array.from({ length: 8 }, (_, i) => `Sentence ${i}.`)
+      await initWithAudio(service, sentences)
+
+      const firstUrl = urls.createdUrls[0]
+
+      await service.playFromSegment(0)
+      for (let i = 0; i < 7; i++) {
+        audio.latest().end()
+      }
+
+      expect(service.currentSegmentIndex).toBe(7)
+      // keepBehind is 5, so by index 7 the first segments must be released.
+      expect(urls.revokedUrls).toContain(firstUrl)
     })
   })
 
