@@ -32,6 +32,7 @@
     ]
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.60.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
@@ -60,6 +61,8 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@diffusionstudio/vits-web": "^1.0.3",
     "@mediabunny/aac-encoder": "^1.45.3",
     "@mediabunny/mp3-encoder": "^1.45.3",

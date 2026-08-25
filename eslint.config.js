@@ -68,6 +68,9 @@ export default [
   prettier,
   {
     ignores: [
+      // Native Android project and icon-generation sources — not lintable JS/TS
+      'android/**',
+      'assets/**',
       'node_modules/**',
       'dist/**',
       'build/**',
