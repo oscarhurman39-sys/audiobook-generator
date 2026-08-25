@@ -218,6 +218,30 @@ All six steps are implemented on `claude/new-session-26dft1`, one commit each.
   blocks asserting against local re-implementations rather than the service.
   They document suspected bugs but prove nothing about the real code.
 
+## 5b. Android APK
+
+The app now ships two ways:
+
+1. **PWA** — open the hosted app in Android Chrome, "Add to Home screen".
+2. **APK** — a Capacitor shell (`capacitor.config.ts`, `android/`) bundles the
+   web build into a native WebView app. No hosting needed; the bundle is inside
+   the APK.
+
+The APK cannot be compiled in the development container (`dl.google.com`,
+which hosts the Android SDK and Gradle plugin, is blocked by its network
+policy), so `.github/workflows/android.yml` builds it in GitHub Actions:
+web build → `cap sync` → `gradlew assembleDebug`, uploading
+`audiobook-debug.apk` as a run artifact, and refreshing a rolling
+`android-latest` pre-release on `main` for a stable download link.
+
+It is the **debug** build, signed with the auto-generated debug keystore —
+fine for personal installs ("install unknown apps" prompt), not for Play
+Store distribution.
+
+`[Unverified]` WebView behaviour vs Chrome: Media Session, background audio
+with the screen off, and WASM performance inside the Capacitor WebView all
+need testing on the actual phone, same as the PWA path.
+
 ## 6. Harness note
 
 Playback behaviour is covered by `src/lib/audioPlaybackService.behavior.test.ts`
