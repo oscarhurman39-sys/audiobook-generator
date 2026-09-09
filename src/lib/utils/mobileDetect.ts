@@ -75,7 +75,7 @@ export function isLowResourceDevice(): boolean {
  * Get optimal TTS settings for the current device
  *
  * Mobile/low-resource devices get:
- * - Smaller quantization (q4 vs q8) - ~4x smaller model
+ * - The smallest quantization kokoro-js can load (q8, ~90 MB)
  * - Smaller chunk sizes - faster time-to-first-audio
  * - Lower parallelism - reduces memory pressure
  */
@@ -119,9 +119,11 @@ export function getOptimalTTSSettings(): OptimalTTSSettings {
     }
   }
 
-  // Mobile or low resource: Optimized for speed
+  // Mobile or low resource: the smallest model kokoro-js can load.
+  // q8 (model_quantized.onnx, ~90 MB) is that file. q4 is *larger*, not
+  // smaller: every listing puts the 4-bit Kokoro export at 150 MB or more.
   return {
-    quantization: 'q4', // ~25MB vs ~100MB for q8
+    quantization: 'q8',
     device: 'wasm',
     chunkSize: 400, // Faster first-audio time
     parallelChunks: 1,

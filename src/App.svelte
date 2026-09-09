@@ -19,6 +19,7 @@
   // APIs & Logic
   import { listVoices as listKokoroVoices } from './lib/kokoro/kokoroVoices'
   import { warmUpKokoro } from './lib/kokoro/kokoroClient'
+  import { isMobileDevice } from './lib/utils/mobileDetect'
   import { piperVoices, loadPiperVoices } from './stores/piperVoicesStore'
   import { buildBookHash, buildReaderHash, parseHash } from './lib/utils/hashRoutes'
   import { isKokoroLanguageSupported, selectPiperVoiceForLanguage } from './lib/utils/voiceSelector'
@@ -132,8 +133,14 @@
   $effect(() => {
     const model = $selectedModel
     if (model === 'kokoro') {
-      // Warm up the model eagerly so the first generation doesn't pay load cost
-      warmUpKokoro('onnx-community/Kokoro-82M-v1.0-ONNX', $selectedQuantization, $selectedDevice)
+      // Warm up the model eagerly so the first generation doesn't pay load cost.
+      // Not on phones: the worker loads its own copy for generation, so a
+      // main-thread warm-up doubles the model's memory and blocks the UI thread
+      // while the ONNX session is built. The loading pill is driven by the
+      // worker's progress messages instead.
+      if (!isMobileDevice()) {
+        warmUpKokoro('onnx-community/Kokoro-82M-v1.0-ONNX', $selectedQuantization, $selectedDevice)
+      }
       availableVoices.set(
         kokoroVoices.map((v) => ({
           id: v,

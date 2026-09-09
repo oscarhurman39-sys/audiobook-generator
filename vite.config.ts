@@ -1,8 +1,13 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { VitePWA } from 'vite-plugin-pwa'
+import { version } from './package.json'
 
 export default defineConfig({
+  define: {
+    // Shown on the Diagnostics screen so a bug report names the build it came from.
+    __APP_VERSION__: JSON.stringify(version),
+  },
   plugins: [
     svelte(),
     VitePWA({

@@ -131,7 +131,7 @@ describe('mobileDetect', () => {
       })
 
       const settings = getOptimalTTSSettings()
-      expect(settings.quantization).toBe('q4')
+      expect(settings.quantization).toBe('q8')
       expect(settings.chunkSize).toBe(400)
       expect(settings.parallelChunks).toBe(1)
     })
@@ -157,7 +157,7 @@ describe('mobileDetect', () => {
       })
 
       const settings = getOptimalTTSSettings()
-      expect(settings.quantization).toBe('q4')
+      expect(settings.quantization).toBe('q8')
       expect(settings.chunkSize).toBe(400)
     })
   })
@@ -182,12 +182,12 @@ describe('mobileDetect', () => {
   })
 
   describe('getRecommendedQuantization', () => {
-    it('should return q4 for mobile devices', () => {
+    it('should return q8 for mobile devices', () => {
       vi.stubGlobal('navigator', {
         userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS)',
         maxTouchPoints: 2,
       })
-      expect(getRecommendedQuantization()).toBe('q4')
+      expect(getRecommendedQuantization()).toBe('q8')
     })
 
     it('should return q8 for desktop devices', () => {

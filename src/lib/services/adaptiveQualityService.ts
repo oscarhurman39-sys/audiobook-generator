@@ -75,7 +75,10 @@ export function resolveTierLadder(
     return {
       tiers: [
         { model: 'web_speech', voice: '' }, // tier 0
-        { model: 'kokoro', voice, quantization: 'q4', device: 'wasm' }, // tier 1
+        // Tiers 1 and 2 both use q8: it is the smallest Kokoro file kokoro-js can
+        // load (q4 is larger), and phones cap at tier 1, so tier 1 must be the
+        // cheapest real voice. Tier 2 stays q8 so desktop targets are unchanged.
+        { model: 'kokoro', voice, quantization: 'q8', device: 'wasm' }, // tier 1
         { model: 'kokoro', voice, quantization: 'q8', device: 'wasm' }, // tier 2
         { model: 'kokoro', voice, quantization: 'fp16', device: 'auto' }, // tier 3
       ],

@@ -274,7 +274,8 @@ export function warmUpKokoro(
   if (ttsInstance) return
   ;(async () => {
     try {
-      const { setModelLoading, setModelReady } = await import('../../stores/modelLoadingStore')
+      const { applyModelProgressMessage, setModelReady } =
+        await import('../../stores/modelLoadingStore')
       let actualDevice: 'wasm' | 'webgpu' | 'cpu' = 'wasm'
       if (device === 'auto') {
         actualDevice = (await isWebGPUAvailableAsync()) ? 'webgpu' : 'wasm'
@@ -282,9 +283,7 @@ export function warmUpKokoro(
         actualDevice = device as 'wasm' | 'webgpu' | 'cpu'
       }
       await getKokoroInstance(model, dtype, actualDevice, (msg) => {
-        // Parse percentage out of messages like "Downloading model.onnx: 42%"
-        const pct = msg.match(/(\d+)%/)
-        setModelLoading(msg, pct ? parseInt(pct[1], 10) : undefined)
+        applyModelProgressMessage(msg)
       })
       setModelReady()
       logger.info('[KokoroClient]', 'Warm-up complete')

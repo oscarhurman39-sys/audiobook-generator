@@ -102,7 +102,8 @@ describe('getTierConfig', () => {
   it('returns kokoro config for tier 1 in English', () => {
     const config = getTierConfig(1, 'en', [])
     expect(config?.model).toBe('kokoro')
-    expect(config?.quantization).toBe('q4')
+    // q8 is the smallest Kokoro file kokoro-js can load; q4 is larger, not smaller
+    expect(config?.quantization).toBe('q8')
   })
 
   it('returns piper config for tier 1 in German', () => {
@@ -143,11 +144,19 @@ describe('resolveTierLadder — chosen voice is preserved', () => {
     }
   )
 
-  it('still varies quantization across the tiers', () => {
+  it('keeps the fast tiers on q8 and reserves fp16 for the top tier', () => {
     const ladder = resolveTierLadder('en', [], 'bm_george')
 
-    expect(ladder.tiers[1]).toMatchObject({ voice: 'bm_george', quantization: 'q4' })
-    expect(ladder.tiers[2]).toMatchObject({ voice: 'bm_george', quantization: 'q8' })
+    expect(ladder.tiers[1]).toMatchObject({
+      voice: 'bm_george',
+      quantization: 'q8',
+      device: 'wasm',
+    })
+    expect(ladder.tiers[2]).toMatchObject({
+      voice: 'bm_george',
+      quantization: 'q8',
+      device: 'wasm',
+    })
     expect(ladder.tiers[3]).toMatchObject({ voice: 'bm_george', quantization: 'fp16' })
   })
 

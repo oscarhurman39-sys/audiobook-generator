@@ -8,6 +8,12 @@ import type { TTSModelType } from './tts/ttsModels'
 import { retryWithBackoff, isRetryableError } from './retryUtils'
 import { normalizeError, CancellationError } from './errors'
 import { toastStore } from '../stores/toastStore'
+import { isMobileDevice } from './utils/mobileDetect'
+import {
+  applyModelProgressMessage,
+  setModelError,
+  setModelReady,
+} from '../stores/modelLoadingStore'
 
 type WorkerRequest = {
   id: string
@@ -90,6 +96,19 @@ function isMemoryError(msg: string): boolean {
   )
 }
 
+/**
+ * Every Kokoro request passes through here, whichever UI path made it, so this
+ * is the one place to keep phones on the profile they can actually run: the
+ * smallest model file (q8; q4 is larger) on the WASM backend. Callers may hand
+ * over a persisted preference from an earlier build or a desktop session.
+ */
+export function capRequestForDevice<
+  T extends Pick<WorkerRequest, 'modelType' | 'dtype' | 'device'>,
+>(request: T): T {
+  if (request.modelType !== 'kokoro' || !isMobileDevice()) return request
+  return { ...request, dtype: 'q8', device: 'wasm' }
+}
+
 export class TTSWorkerManager {
   private worker: Worker | null = null
   private pendingRequests = new Map<string, PendingRequest>()
@@ -97,6 +116,12 @@ export class TTSWorkerManager {
   private ready = false
   private readyPromise: Promise<void>
   private isRestarting = false
+  /**
+   * True from the first model-loading progress message until a result or error
+   * arrives. The worker is where the model actually loads, so it is the worker's
+   * messages, not a main-thread warm-up, that should drive the loading pill.
+   */
+  private modelLoadInFlight = false
 
   constructor() {
     this.readyPromise = this.initWorker()
@@ -140,6 +165,7 @@ export class TTSWorkerManager {
               } else {
                 blob = (resp as Extract<WorkerResponse, { type: 'complete'; blob: Blob }>).blob
               }
+              this.settleModelLoad('ready')
               pending.resolve(blob)
               this.pendingRequests.delete(id)
               break
@@ -161,6 +187,7 @@ export class TTSWorkerManager {
                   >
                 ).segments
               }
+              this.settleModelLoad('ready')
               pending.resolve(segments)
               this.pendingRequests.delete(id)
               break
@@ -168,6 +195,7 @@ export class TTSWorkerManager {
             case 'error': {
               const resp = data as Extract<WorkerResponse, { type: 'error' }>
               logger.error('[TTSWorker] error from worker:', resp.error)
+              this.settleModelLoad('error')
               const err = new Error(resp.error || 'Unknown worker error')
               const respAny = resp as unknown as { message?: string }
               if (respAny.message) {
@@ -185,7 +213,10 @@ export class TTSWorkerManager {
             }
             case 'progress': {
               const resp = data as Extract<WorkerResponse, { type: 'progress' }>
-              if (resp.message && pending.onProgress) pending.onProgress(resp.message)
+              if (resp.message) {
+                if (applyModelProgressMessage(resp.message)) this.modelLoadInFlight = true
+                if (pending.onProgress) pending.onProgress(resp.message)
+              }
               break
             }
             case 'chunk-progress': {
@@ -239,6 +270,14 @@ export class TTSWorkerManager {
         reject(err as Error)
       }
     })
+  }
+
+  /** Close out a model load reflected in the pill: ready on a result, cleared on an error. */
+  private settleModelLoad(outcome: 'ready' | 'error'): void {
+    if (!this.modelLoadInFlight) return
+    this.modelLoadInFlight = false
+    if (outcome === 'ready') setModelReady()
+    else setModelError()
   }
 
   /** Restart the worker on memory errors, waiting if a restart is already in progress. */
@@ -364,7 +403,7 @@ export class TTSWorkerManager {
         await this.readyPromise
         if (!this.worker) throw new Error('Worker not initialized')
         return this.dispatch<Blob>(
-          {
+          capRequestForDevice({
             type: 'generate',
             text: options.text,
             modelType: options.modelType,
@@ -376,7 +415,7 @@ export class TTSWorkerManager {
             model: options.model,
             device: options.device,
             advancedSettings: options.advancedSettings,
-          },
+          }),
           { onProgress: options.onProgress, onChunkProgress: options.onChunkProgress }
         )
       },
@@ -393,7 +432,7 @@ export class TTSWorkerManager {
         await this.readyPromise
         if (!this.worker) throw new Error('Worker not initialized')
         return this.dispatch<{ text: string; blob: Blob }[]>(
-          {
+          capRequestForDevice({
             type: 'generate-segments',
             text: options.text,
             modelType: options.modelType,
@@ -404,7 +443,7 @@ export class TTSWorkerManager {
             dtype: options.dtype,
             model: options.model,
             device: options.device,
-          },
+          }),
           { onProgress: options.onProgress, onChunkProgress: options.onChunkProgress }
         )
       },
