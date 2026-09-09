@@ -15,7 +15,10 @@ jobs:
   e2e:
     name: E2E Smoke Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Five generation tests can each take up to ~95 s and retry twice on CI, so a
+    # single failing one blew the old 5-minute cap and cancelled the job before
+    # the artifact step ran. Enough headroom for the worst case, not the norm.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -48,7 +51,9 @@ jobs:
           CI: true
 
       - name: Upload test artifacts
-        if: failure()
+        # always(): a job that hits timeout-minutes counts as cancelled, not
+        # failed, and failure() would skip the upload exactly when it matters.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
