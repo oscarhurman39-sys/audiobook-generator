@@ -12,6 +12,28 @@ export interface LoggerConfig {
   silent: boolean
 }
 
+/** One entry in the in-memory buffer that the Diagnostics screen reads back. */
+export interface LogEntry {
+  time: string
+  level: LogLevel
+  text: string
+}
+
+/** How many entries the buffer keeps. Enough for a failed generation, small enough to share. */
+const MAX_RECENT_LOGS = 300
+
+function renderArgForBuffer(a: unknown): string {
+  if (a instanceof Error) return `${a.name}: ${a.message}`
+  if (typeof a === 'object' && a !== null) {
+    try {
+      return JSON.stringify(a)
+    } catch {
+      return String(a)
+    }
+  }
+  return String(a)
+}
+
 const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -24,6 +46,12 @@ class Logger {
     level: 'info',
     silent: false,
   }
+
+  /**
+   * Recent entries, kept regardless of level or `silent`, so a device with no
+   * devtools (a phone) can still hand over what happened.
+   */
+  private recent: LogEntry[] = []
 
   constructor() {
     // Detect test environment and silence logs by default
@@ -48,6 +76,23 @@ class Logger {
    */
   getConfig(): LoggerConfig {
     return { ...this.config }
+  }
+
+  private record(level: LogLevel, prefix: string, args: unknown[]): void {
+    const text = [prefix, ...args.map(renderArgForBuffer)].join(' ')
+    this.recent.push({ time: new Date().toISOString(), level, text })
+    if (this.recent.length > MAX_RECENT_LOGS) {
+      this.recent.splice(0, this.recent.length - MAX_RECENT_LOGS)
+    }
+  }
+
+  /** A copy of the most recent log entries, oldest first. */
+  getRecentLogs(): LogEntry[] {
+    return this.recent.map((e) => ({ ...e }))
+  }
+
+  clearRecentLogs(): void {
+    this.recent = []
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -77,6 +122,7 @@ class Logger {
    * Log a debug message
    */
   debug(prefix: string, ...args: unknown[]): void {
+    this.record('debug', prefix, args)
     if (this.shouldLog('debug')) {
       console.debug(this.formatMessage('debug', prefix, ...args))
     }
@@ -86,6 +132,7 @@ class Logger {
    * Log an info message
    */
   info(prefix: string, ...args: unknown[]): void {
+    this.record('info', prefix, args)
     if (this.shouldLog('info')) {
       console.log(this.formatMessage('info', prefix, ...args))
     }
@@ -95,6 +142,7 @@ class Logger {
    * Log a warning message
    */
   warn(prefix: string, ...args: unknown[]): void {
+    this.record('warn', prefix, args)
     if (this.shouldLog('warn')) {
       console.warn(this.formatMessage('warn', prefix, ...args))
     }
@@ -104,6 +152,7 @@ class Logger {
    * Log an error message
    */
   error(prefix: string, ...args: unknown[]): void {
+    this.record('error', prefix, args)
     if (this.shouldLog('error')) {
       console.error(this.formatMessage('error', prefix, ...args))
     }

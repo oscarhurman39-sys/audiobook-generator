@@ -85,3 +85,21 @@ test.describe('Core UX Features', () => {
     await expect(page.locator('.toast-container').first()).toBeAttached()
   })
 })
+
+test.describe('Diagnostics', () => {
+  test('should produce a copyable report from the settings page', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Run diagnostics' }).click()
+
+    const report = page.getByLabel('Diagnostics report')
+    await expect(report).toBeVisible({ timeout: 15000 })
+    const text = await report.inputValue()
+    expect(text).toContain('Audiobook diagnostics')
+    expect(text).toContain('[capabilities]')
+    expect(text).toContain('[settings]')
+    expect(text).not.toContain('undefined')
+  })
+})

@@ -158,3 +158,39 @@ describe('Logger', () => {
     })
   })
 })
+
+describe('recent log buffer', () => {
+  beforeEach(() => {
+    logger.clearRecentLogs()
+    logger.configure({ level: 'debug', silent: true })
+  })
+
+  it('records entries even when console output is silenced', () => {
+    logger.info('[Test]', 'hello', { a: 1 })
+    logger.error('[Test]', 'boom')
+    const entries = logger.getRecentLogs()
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({ level: 'info', text: '[Test] hello {"a":1}' })
+    expect(entries[1]).toMatchObject({ level: 'error', text: '[Test] boom' })
+    expect(entries[0].time).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('keeps only the most recent entries', () => {
+    for (let i = 0; i < 350; i++) logger.info('[Test]', `line ${i}`)
+    const entries = logger.getRecentLogs()
+    expect(entries).toHaveLength(300)
+    expect(entries[0].text).toBe('[Test] line 50')
+    expect(entries[entries.length - 1].text).toBe('[Test] line 349')
+  })
+
+  it('returns a copy so callers cannot mutate the buffer', () => {
+    logger.info('[Test]', 'x')
+    logger.getRecentLogs().length = 0
+    expect(logger.getRecentLogs()).toHaveLength(1)
+  })
+
+  it('serialises Error objects with their message', () => {
+    logger.error('[Test]', new Error('kaput'))
+    expect(logger.getRecentLogs()[0].text).toContain('kaput')
+  })
+})

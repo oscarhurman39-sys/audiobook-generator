@@ -28,6 +28,7 @@
     type StorageInfo,
   } from '../lib/storageManager'
   import { toastStore } from '../stores/toastStore'
+  import { collectDiagnostics, formatDiagnostics } from '../lib/diagnostics'
 
   interface Props {
     onBack: () => void
@@ -36,6 +37,40 @@
   let { onBack }: Props = $props()
 
   let settings = $derived($appSettings)
+
+  // Diagnostics: device facts plus recent log lines, as plain text to copy or share.
+  let diagnosticsReport = $state('')
+  let collectingDiagnostics = $state(false)
+  const canShareDiagnostics =
+    typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+
+  async function runDiagnostics() {
+    collectingDiagnostics = true
+    try {
+      diagnosticsReport = formatDiagnostics(await collectDiagnostics())
+    } catch (err) {
+      diagnosticsReport = `Diagnostics failed: ${err instanceof Error ? err.message : String(err)}`
+    } finally {
+      collectingDiagnostics = false
+    }
+  }
+
+  async function copyDiagnostics() {
+    try {
+      await navigator.clipboard.writeText(diagnosticsReport)
+      toastStore.success('Diagnostics copied')
+    } catch {
+      toastStore.error('Copy failed. Select the text and copy it manually.')
+    }
+  }
+
+  async function shareDiagnostics() {
+    try {
+      await navigator.share({ title: 'Audiobook diagnostics', text: diagnosticsReport })
+    } catch {
+      // The user closed the share sheet, or the platform declined. Nothing to report.
+    }
+  }
   let addingLanguage = $state(false)
   let newLangCode = $state('')
   let storageInfo = $state<StorageInfo | null>(null)
@@ -410,6 +445,34 @@
       <button class="refresh-btn" onclick={loadStorageInfo}>↻ Refresh</button>
     {/if}
   </section>
+
+  <section class="settings-section">
+    <h3>Diagnostics</h3>
+    <p class="section-desc">
+      Device facts and the last few hundred log lines. Run it after something goes wrong, then
+      copy or share the text.
+    </p>
+    <div class="diag-actions">
+      <button class="refresh-btn" onclick={runDiagnostics} disabled={collectingDiagnostics}>
+        {collectingDiagnostics ? 'Collecting…' : 'Run diagnostics'}
+      </button>
+      {#if diagnosticsReport}
+        <button class="refresh-btn" onclick={copyDiagnostics}>Copy</button>
+        {#if canShareDiagnostics}
+          <button class="refresh-btn" onclick={shareDiagnostics}>Share</button>
+        {/if}
+      {/if}
+    </div>
+    {#if diagnosticsReport}
+      <textarea
+        class="diag-report"
+        readonly
+        rows="14"
+        aria-label="Diagnostics report"
+        value={diagnosticsReport}
+      ></textarea>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -732,6 +795,27 @@
   .model-delete-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .diag-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .diag-report {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--text-color);
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px;
+    resize: vertical;
   }
 
   .storage-actions {

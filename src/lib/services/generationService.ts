@@ -605,8 +605,8 @@ class GenerationService {
         }
 
         const currentVoice = ch.voice || langDefaults?.voice || get(selectedVoice)
-        // Cap quantization to q4 on mobile to avoid loading a ~100MB q8 model
-        const currentQuantization = isMobileDevice() ? 'q4' : get(selectedQuantization)
+        // Phones get the smallest Kokoro file, q8 (~90 MB). q4 is larger, not smaller.
+        const currentQuantization = isMobileDevice() ? 'q8' : get(selectedQuantization)
         const currentDevice = get(selectedDevice)
         const currentAdvancedSettings = get(advancedSettings)[effectiveModel] || {}
 
@@ -748,7 +748,7 @@ class GenerationService {
           effectiveModel = 'piper'
         }
         const currentVoice = ch.voice || langDefaults?.voice || get(selectedVoice)
-        const currentQuantization = isMobileDevice() ? 'q4' : get(selectedQuantization)
+        const currentQuantization = isMobileDevice() ? 'q8' : get(selectedQuantization)
         const currentDevice = get(selectedDevice)
         const currentAdvancedSettings = get(advancedSettings)[effectiveModel] || {}
 

@@ -262,3 +262,36 @@ Two things are worth recording:
 
 Suite at the end of this work: 749 passing, lint clean, type-check and build
 clean.
+
+## 7. First device test (2026-09-09)
+
+Debug APK installed on an Android phone from the `android-latest` release.
+Result: three symptoms at once — the model pill stuck on "Loading: done" with a
+spinner, generation stuck at 0/540 segments, and the reader never leaving
+"Loading chapter…". No device logs were available.
+
+What the code was doing on the phone:
+
+- The main thread warmed up Kokoro (`App.svelte`) while the worker loaded its
+  own copy for generation: two ONNX sessions, and a main-thread session build.
+- The mobile profile chose `q4`. The comment claimed ~25 MB; every listing found
+  puts the 4-bit Kokoro export at 150 MB or more, while `q8`
+  (`model_quantized.onnx`) is ~90 MB. `q4` was the larger download.
+- The reader's quality ladder targets tier 1 on phones, which was also `q4`.
+- "Loading: done" is transformers.js's per-file status; kokoro-js never emits
+  "ready", so the pill had no way to reflect the session build that follows.
+
+Changes:
+
+- No main-thread warm-up on phones; the pill is driven by the worker's own
+  progress messages and settles when the first result or an error arrives.
+- Phones use `q8` everywhere: adaptive defaults, the generation cap, and tier 1
+  of the quality ladder.
+- Settings → Diagnostics collects runtime, device limits, capabilities
+  (`crossOriginIsolated`, `SharedArrayBuffer`, WebGPU, service worker), storage
+  and cached models, current settings, and the last 300 log lines, as text to
+  copy or share. Uncaught errors are recorded into that log.
+
+`[Unverified]` whether this makes generation work on the phone. It removes the
+two things the code was demonstrably doing wrong there; the diagnostics screen
+exists so the next report carries the phone's own evidence.
