@@ -3,6 +3,8 @@
   import { audioService } from '../lib/audioPlaybackService.svelte'
   import { onMount } from 'svelte'
   import type { Chapter } from '../lib/types/book'
+  import { appSettings } from '../stores/appSettingsStore'
+  import { sleepTimer, formatSleepRemaining, SLEEP_TIMER_PRESETS } from '../stores/sleepTimerStore'
 
   let {
     mode = 'persistent',
@@ -34,6 +36,9 @@
 
   let playerState = $derived($audioPlayerStore)
   let playbackInfo = $derived($currentPlaybackInfo)
+  let skipSeconds = $derived($appSettings.playback.skipSeconds)
+  let sleep = $derived($sleepTimer)
+  let showSleepMenu = $state(false)
 
   // Format time as MM:SS
   function formatTime(seconds: number): string {
@@ -69,14 +74,37 @@
     audioService.skipPrevious()
   }
 
-  function handleSkip10Back(e: MouseEvent) {
+  function handleSkipBack(e: MouseEvent) {
     e.stopPropagation()
-    audioService.skip(-10)
+    audioService.skip(-skipSeconds)
   }
 
-  function handleSkip10Forward(e: MouseEvent) {
+  function handleSkipForwardSeconds(e: MouseEvent) {
     e.stopPropagation()
-    audioService.skip(10)
+    audioService.skip(skipSeconds)
+  }
+
+  function toggleSleepMenu(e: MouseEvent) {
+    e.stopPropagation()
+    showSleepMenu = !showSleepMenu
+  }
+
+  function startSleepMinutes(e: MouseEvent, minutes: number) {
+    e.stopPropagation()
+    sleepTimer.startMinutes(minutes)
+    showSleepMenu = false
+  }
+
+  function startSleepEndOfChapter(e: MouseEvent) {
+    e.stopPropagation()
+    sleepTimer.startEndOfChapter()
+    showSleepMenu = false
+  }
+
+  function cancelSleep(e: MouseEvent) {
+    e.stopPropagation()
+    sleepTimer.cancel()
+    showSleepMenu = false
   }
 
   function handleBarClick(e: MouseEvent) {
@@ -164,10 +192,10 @@
     <!-- Controls -->
     <div class="controls">
       <button
-        class="control-btn skip-10"
-        onclick={handleSkip10Back}
-        aria-label="Skip back 10 seconds"
-        title="Skip back 10 seconds"
+        class="control-btn skip-seconds"
+        onclick={handleSkipBack}
+        aria-label="Skip back {skipSeconds} seconds"
+        title="Skip back {skipSeconds} seconds"
       >
         <svg
           width="20"
@@ -179,7 +207,7 @@
         >
           <path d="M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38" />
         </svg>
-        <span class="skip-label">10</span>
+        <span class="skip-label">{skipSeconds}</span>
       </button>
 
       <button
@@ -238,10 +266,10 @@
       </button>
 
       <button
-        class="control-btn skip-10"
-        onclick={handleSkip10Forward}
-        aria-label="Skip forward 10 seconds"
-        title="Skip forward 10 seconds"
+        class="control-btn skip-seconds"
+        onclick={handleSkipForwardSeconds}
+        aria-label="Skip forward {skipSeconds} seconds"
+        title="Skip forward {skipSeconds} seconds"
       >
         <svg
           width="20"
@@ -253,7 +281,7 @@
         >
           <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38" />
         </svg>
-        <span class="skip-label">10</span>
+        <span class="skip-label">{skipSeconds}</span>
       </button>
     </div>
 
@@ -276,6 +304,57 @@
 
     <!-- Extra Actions -->
     <div class="actions">
+      <div class="sleep-wrapper">
+        <button
+          class="control-btn sleep-btn"
+          class:active={sleep.active}
+          onclick={toggleSleepMenu}
+          aria-label="Sleep timer"
+          aria-expanded={showSleepMenu}
+          title={sleep.active ? 'Sleep timer running' : 'Sleep timer'}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+          </svg>
+          {#if sleep.active}
+            <span class="sleep-label">
+              {sleep.mode === 'end-of-chapter'
+                ? 'CH'
+                : formatSleepRemaining(sleep.remainingSeconds ?? 0)}
+            </span>
+          {/if}
+        </button>
+
+        {#if showSleepMenu}
+          <div class="sleep-menu" role="menu">
+            {#if sleep.active}
+              <button class="sleep-option cancel" role="menuitem" onclick={cancelSleep}>
+                Cancel timer
+              </button>
+            {/if}
+            {#each SLEEP_TIMER_PRESETS as minutes (minutes)}
+              <button
+                class="sleep-option"
+                role="menuitem"
+                onclick={(e) => startSleepMinutes(e, minutes)}
+              >
+                {minutes} minutes
+              </button>
+            {/each}
+            <button class="sleep-option" role="menuitem" onclick={startSleepEndOfChapter}>
+              End of chapter
+            </button>
+          </div>
+        {/if}
+      </div>
+
       {#if mode === 'reader'}
         <button
           class="control-btn settings-btn"
@@ -436,11 +515,68 @@
     position: relative;
   }
 
-  .control-btn.skip-10 {
+  .sleep-wrapper {
+    position: relative;
+    display: flex;
+  }
+
+  .control-btn.sleep-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .control-btn.sleep-btn.active {
+    color: var(--primary-color);
+  }
+
+  .sleep-label {
+    font-size: 0.65rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  .sleep-menu {
+    position: absolute;
+    bottom: calc(100% + 0.5rem);
+    right: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-width: 10rem;
+    padding: 0.25rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background: var(--surface-color);
+    box-shadow: 0 4px 16px var(--shadow-color);
+  }
+
+  .sleep-option {
+    padding: 0.5rem 0.75rem;
+    border: none;
+    border-radius: 0.375rem;
+    background: none;
+    color: var(--text-color);
+    font-size: 0.875rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sleep-option:hover {
+    background: var(--bg-color);
+  }
+
+  .sleep-option.cancel {
+    color: var(--primary-color);
+    font-weight: 600;
+  }
+
+  .control-btn.skip-seconds {
     position: relative;
   }
 
-  .control-btn.skip-10 .skip-label {
+  .control-btn.skip-seconds .skip-label {
     position: absolute;
     font-size: 10px;
     font-weight: bold;

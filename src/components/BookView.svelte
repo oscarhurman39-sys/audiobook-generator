@@ -27,6 +27,7 @@
   import { generationService, isGeneratingStore } from '../lib/services/generationService'
   import { TTS_MODELS } from '../lib/tts/ttsModels'
   import ChapterItem from './ChapterItem.svelte'
+  import VoiceAudition from './VoiceAudition.svelte'
   import ExportPanel from './ExportPanel.svelte'
   import Skeleton from './Skeleton.svelte'
   import type { Chapter } from '../lib/types/book'
@@ -37,8 +38,33 @@
     formatDurationShort,
   } from '../lib/utils/textStats'
   import { ADVANCED_SETTINGS_SCHEMA } from '../lib/types/settings'
+  import { setBookVoice } from '../lib/libraryDB'
+  import type { VoiceId } from '../lib/kokoro/kokoroVoices'
   import { segmentProgress } from '../stores/segmentProgressStore'
   import { type ExportFormat } from '../lib/exportFormats'
+  import logger from '../lib/utils/logger'
+
+  let showVoiceAudition = $state(false)
+
+  /**
+   * Commit an auditioned voice to this book. There is no book-level voice
+   * field, so it is written to every chapter — see setBookVoice.
+   */
+  async function handleVoiceAudition(voice: VoiceId) {
+    selectedVoice.set(voice)
+    showVoiceAudition = false
+
+    const id = get(currentLibraryBookId)
+    if (!id) return
+
+    try {
+      await setBookVoice(id, voice)
+      toastStore.success('Voice saved for this book')
+    } catch (err) {
+      logger.warn('[BookView] Failed to persist book voice', err)
+      toastStore.error('Could not save the voice for this book')
+    }
+  }
 
   let { onread }: { onread: (detail: { chapter: Chapter }) => void } = $props()
 
@@ -596,6 +622,15 @@
             <option value={voice.id}>{voice.label}</option>
           {/each}
         </select>
+
+        <button
+          class="premium-select audition-btn"
+          disabled={isGenerating}
+          onclick={() => (showVoiceAudition = true)}
+          title="Hear the voices before choosing"
+        >
+          Audition
+        </button>
       </div>
 
       <div class="toolbar-right">
@@ -810,7 +845,50 @@
   {/if}
 </div>
 
+{#if showVoiceAudition}
+  <div
+    class="audition-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Choose a voice for this book"
+  >
+    <div class="audition-panel">
+      <VoiceAudition
+        selected={$selectedVoice}
+        onselect={handleVoiceAudition}
+        onclose={() => (showVoiceAudition = false)}
+        scopeLabel={currentBook?.title}
+      />
+    </div>
+  </div>
+{/if}
+
 <style>
+  .audition-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.55);
+  }
+
+  .audition-panel {
+    width: min(30rem, 100%);
+    max-height: min(80vh, 44rem);
+    overflow-y: auto;
+    padding: 1.25rem;
+    border-radius: 0.875rem;
+    background: var(--bg-color);
+    box-shadow: 0 18px 48px var(--shadow-color);
+  }
+
+  .audition-btn {
+    cursor: pointer;
+  }
+
   .book-view {
     display: flex;
     flex-direction: column;

@@ -1,0 +1,90 @@
+name: Android APK
+
+# Builds the Capacitor Android app. The web bundle is built fresh and synced
+# into the native project, so the APK always matches the committed source.
+#
+# Runs on demand (Actions tab -> Android APK -> Run workflow, any branch) and
+# on pushes to main. Every run uploads the APK as a workflow artifact; runs on
+# main also refresh the rolling "android-latest" pre-release, which gives a
+# stable download link for installing from a phone.
+#
+# This is the DEBUG build, signed with the auto-generated debug keystore. That
+# installs and runs fine for personal use (enable "install unknown apps"), but
+# is not suitable for Play Store distribution.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      # Feature branches build the APK too (artifact only, no release), so an
+      # APK can be produced before anything is merged.
+      - 'claude/**'
+
+permissions:
+  contents: write # needed to update the android-latest pre-release
+
+jobs:
+  apk:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: 'pnpm'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web bundle
+        run: pnpm build
+
+      - name: Sync web bundle into the Android project
+        run: npx cap sync android
+
+      # The runner image ships the Android SDK; accept licenses defensively in
+      # case the required platform/build-tools need to be fetched on demand.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk audiobook-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: audiobook-debug-apk
+          path: audiobook-debug.apk
+          retention-days: 30
+
+      - name: Update android-latest pre-release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest audiobook-debug.apk \
+            --prerelease \
+            --title "Android APK (latest)" \
+            --notes "Debug APK built from ${GITHUB_SHA}. Download audiobook-debug.apk on your phone and open it to install (allow 'install unknown apps' when prompted)."

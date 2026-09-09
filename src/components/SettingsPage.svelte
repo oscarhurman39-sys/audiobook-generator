@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { appSettings, type LanguageDefault } from '../stores/appSettingsStore'
+  import {
+    appSettings,
+    type LanguageDefault,
+    type SkipSeconds,
+  } from '../stores/appSettingsStore'
+
+  /** Jump sizes offered in Settings — 15s and 30s are the audiobook conventions. */
+  const SKIP_OPTIONS: SkipSeconds[] = [10, 15, 30]
   import { LANGUAGE_OPTIONS, getLanguageLabel } from '../lib/utils/languageResolver'
   import { TTS_MODELS } from '../lib/tts/ttsModels'
   import { voiceLabels } from '../stores/ttsStore'
@@ -244,6 +251,41 @@
         + Add language default
       </button>
     {/if}
+  </section>
+
+  <section class="settings-section">
+    <h3>Playback</h3>
+    <p class="section-desc">
+      How the player behaves while you listen. The jump size also applies to the lock-screen and
+      headset controls.
+    </p>
+
+    <div class="toggle-row">
+      <label for="skip-seconds">Jump size</label>
+      <select
+        id="skip-seconds"
+        value={settings.playback.skipSeconds}
+        onchange={(e) =>
+          appSettings.setSkipSeconds(
+            Number((e.target as HTMLSelectElement).value) as (typeof SKIP_OPTIONS)[number]
+          )}
+      >
+        {#each SKIP_OPTIONS as seconds (seconds)}
+          <option value={seconds}>{seconds} seconds</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="toggle-row">
+      <label for="auto-advance">Continue into the next chapter</label>
+      <input
+        id="auto-advance"
+        type="checkbox"
+        checked={settings.playback.autoAdvanceChapters}
+        onchange={(e) =>
+          appSettings.setAutoAdvanceChapters((e.target as HTMLInputElement).checked)}
+      />
+    </div>
   </section>
 
   <section class="settings-section">

@@ -10,6 +10,7 @@
 import type { AudioSegment } from '../types/audio'
 import type { PiperVoice } from '../piper/piperClient'
 import { isKokoroLanguageSupported, normalizeLanguageCode } from '../utils/voiceSelector'
+import { listVoices as listKokoroVoices } from '../kokoro/kokoroVoices'
 import { getStartingTier, getTargetTier, canRunUpgrade } from '../utils/resourceMonitor'
 import {
   updateSegmentQuality,
@@ -38,21 +39,45 @@ interface TierLadder {
 // Tier ladder resolution
 // ---------------------------------------------------------------------------
 
+/** Voice used for the Kokoro ladder when the user has expressed no preference. */
+export const DEFAULT_KOKORO_VOICE = 'af_heart'
+
+function isKnownKokoroVoice(voice: string | undefined): boolean {
+  if (!voice) return false
+  return (listKokoroVoices() as string[]).includes(voice)
+}
+
 /**
  * Build the tier ladder for a given language.
  * English uses Kokoro; other languages use Piper.
  * Tiers with no available voice are set to null.
+ *
+ * `preferredVoice` is the voice the user actually chose. It matters because the
+ * tiers are a *quality* ladder, not a voice ladder: upgrading a segment must
+ * never change who is reading. For Kokoro the tiers differ only by
+ * quantization, so the chosen voice is carried across all of them. For Piper
+ * the tiers *are* different voices, so an explicit choice collapses the ladder
+ * to the single tier matching that voice's quality — the segment stays at the
+ * voice the user picked rather than being silently upgraded into another one.
  */
-export function resolveTierLadder(language: string, piperVoices: PiperVoice[]): TierLadder {
+export function resolveTierLadder(
+  language: string,
+  piperVoices: PiperVoice[],
+  preferredVoice?: string
+): TierLadder {
   const useKokoro = isKokoroLanguageSupported(language)
 
   if (useKokoro) {
+    const voice = isKnownKokoroVoice(preferredVoice)
+      ? (preferredVoice as string)
+      : DEFAULT_KOKORO_VOICE
+
     return {
       tiers: [
         { model: 'web_speech', voice: '' }, // tier 0
-        { model: 'kokoro', voice: 'af_heart', quantization: 'q4', device: 'wasm' }, // tier 1
-        { model: 'kokoro', voice: 'af_heart', quantization: 'q8', device: 'wasm' }, // tier 2
-        { model: 'kokoro', voice: 'af_heart', quantization: 'fp16', device: 'auto' }, // tier 3
+        { model: 'kokoro', voice, quantization: 'q4', device: 'wasm' }, // tier 1
+        { model: 'kokoro', voice, quantization: 'q8', device: 'wasm' }, // tier 2
+        { model: 'kokoro', voice, quantization: 'fp16', device: 'auto' }, // tier 3
       ],
       maxAvailableTier: 3,
     }
@@ -67,11 +92,28 @@ export function resolveTierLadder(language: string, piperVoices: PiperVoice[]): 
 
   const qualityForTier: Record<number, PiperVoice['quality']> = { 1: 'low', 2: 'medium', 3: 'high' }
 
+  const langVoices = piperVoices.filter(
+    (v) => normalizeLanguageCode(v.language) === normalizeLanguageCode(language)
+  )
+
+  // An explicitly chosen Piper voice pins the ladder to that voice alone.
+  const chosenPiperVoice = preferredVoice
+    ? langVoices.find((v) => v.key === preferredVoice)
+    : undefined
+
   for (const piperTier of [1, 2, 3] as const) {
     const targetQuality = qualityForTier[piperTier]
-    const langVoices = piperVoices.filter((v) => {
-      return normalizeLanguageCode(v.language) === normalizeLanguageCode(language)
-    })
+
+    if (chosenPiperVoice) {
+      if (chosenPiperVoice.quality === targetQuality) {
+        tierConfigs.push({ model: 'piper', voice: chosenPiperVoice.key })
+        maxAvailableTier = piperTier
+      } else {
+        tierConfigs.push(null)
+      }
+      continue
+    }
+
     const exactMatch = langVoices.find((v) => v.quality === targetQuality)
     if (exactMatch) {
       tierConfigs.push({ model: 'piper', voice: exactMatch.key })
@@ -91,9 +133,10 @@ export function resolveTierLadder(language: string, piperVoices: PiperVoice[]): 
 export function getTierConfig(
   tier: number,
   language: string,
-  piperVoices: PiperVoice[]
+  piperVoices: PiperVoice[],
+  preferredVoice?: string
 ): TierConfig | null {
-  const ladder = resolveTierLadder(language, piperVoices)
+  const ladder = resolveTierLadder(language, piperVoices, preferredVoice)
   return ladder.tiers[tier] ?? null
 }
 
@@ -120,10 +163,11 @@ export async function startFastPass(
   piperVoices: PiperVoice[],
   onSegmentReady: (segment: AudioSegment) => void,
   skipWebSpeech = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  preferredVoice?: string
 ): Promise<void> {
   const startingTier = getStartingTier()
-  const ladder = resolveTierLadder(language, piperVoices)
+  const ladder = resolveTierLadder(language, piperVoices, preferredVoice)
 
   // If skipWebSpeech, bump starting tier to at least 1
   let effectiveTier = skipWebSpeech ? Math.max(1, startingTier) : startingTier
@@ -189,13 +233,14 @@ export function scheduleUpgradePass(
   piperVoices: PiperVoice[],
   getCurrentIndex: () => number,
   onSegmentUpgraded: (segment: AudioSegment) => void,
-  upgradePlayedSegments = true
+  upgradePlayedSegments = true,
+  preferredVoice?: string
 ): void {
   // Cancel any existing upgrade for this chapter
   cancelUpgrade(chapterId)
 
   const targetTier = getTargetTier()
-  const ladder = resolveTierLadder(language, piperVoices)
+  const ladder = resolveTierLadder(language, piperVoices, preferredVoice)
 
   // Find the actual max available tier
   let effectiveTarget = targetTier as number

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Audiobook</string>
+    <string name="title_activity_main">Audiobook</string>
+    <string name="package_name">com.oscar.audiobook</string>
+    <string name="custom_url_scheme">com.oscar.audiobook</string>
+</resources>

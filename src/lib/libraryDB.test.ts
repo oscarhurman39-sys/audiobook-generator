@@ -17,6 +17,7 @@ import {
   saveSegmentIndividually,
   getChapterSegments,
   updateSegmentStartTimes,
+  setBookVoice,
   type AudioGenerationSettings,
 } from './libraryDB'
 import type { Book } from './types/book'
@@ -389,6 +390,54 @@ describe('libraryDB', () => {
       const segments = await getChapterSegments(bookId, '1')
       expect(segments).toHaveLength(1)
       expect(segments[0].startTime).toBe(0)
+    })
+  })
+
+  describe('setBookVoice', () => {
+    it('applies the voice to every chapter, so a book is never half in one narrator', async () => {
+      const id = await addBook(mockBook)
+
+      await setBookVoice(id, 'bf_emma')
+
+      const saved = await getBook(id)
+      expect(saved?.chapters).toHaveLength(2)
+      for (const chapter of saved!.chapters) {
+        expect(chapter.voice).toBe('bf_emma')
+      }
+    })
+
+    it('replaces a previously chosen voice', async () => {
+      const id = await addBook(mockBook)
+
+      await setBookVoice(id, 'bf_emma')
+      await setBookVoice(id, 'bm_george')
+
+      const saved = await getBook(id)
+      expect(saved?.chapters.map((c) => c.voice)).toEqual(['bm_george', 'bm_george'])
+    })
+
+    it('clears the override when passed undefined', async () => {
+      const id = await addBook(mockBook)
+      await setBookVoice(id, 'bf_emma')
+
+      await setBookVoice(id, undefined)
+
+      const saved = await getBook(id)
+      expect(saved?.chapters.every((c) => c.voice === undefined)).toBe(true)
+    })
+
+    it('leaves chapter content untouched', async () => {
+      const id = await addBook(mockBook)
+
+      await setBookVoice(id, 'bf_emma')
+
+      const saved = await getBook(id)
+      expect(saved?.chapters.map((c) => c.content)).toEqual(['Content 1', 'Content 2'])
+      expect(saved?.chapters.map((c) => c.title)).toEqual(['Chapter 1', 'Chapter 2'])
+    })
+
+    it('rejects for a book that does not exist', async () => {
+      await expect(setBookVoice(999999, 'bf_emma')).rejects.toThrow('Book not found')
     })
   })
 })

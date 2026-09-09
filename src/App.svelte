@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import { audioService } from './lib/audioPlaybackService.svelte'
+  import { sleepTimer } from './stores/sleepTimerStore'
   import { fade } from 'svelte/transition'
 
   // Components
@@ -120,6 +122,10 @@
   // Preload Piper voices on mount for language-based selection
   onMount(() => {
     loadPiperVoices()
+
+    // The sleep timer owns the countdown; stopping is the player's job.
+    sleepTimer.setExpiryHandler(() => audioService.pause())
+    return () => sleepTimer.setExpiryHandler(null)
   })
 
   // Reactive Voice Updater
@@ -200,6 +206,8 @@
     sourceUrl?: string
     fromLibrary?: boolean
     libraryId?: number
+    /** Set when resuming from the "Continue listening" card. */
+    resumeChapterId?: string
   }) {
     const b = detail.book
     if (b) {
@@ -254,7 +262,17 @@
         }
       }
 
-      currentView = 'book'
+      // Resuming goes straight back to where the listener left off, rather
+      // than making them walk the chapter list again.
+      const resumeChapter = detail.resumeChapterId
+        ? detectedBook.chapters?.find((c: Chapter) => c.id === detail.resumeChapterId)
+        : undefined
+
+      if (resumeChapter) {
+        navigateToReader(resumeChapter)
+      } else {
+        currentView = 'book'
+      }
 
       // Auto-generate on new imports only (not when reopening library books)
       if (!detail.fromLibrary && detectedBook.chapters?.length > 0) {
@@ -444,6 +462,7 @@
             selectedModel={readerModel}
             chapters={$book?.chapters ?? []}
             onBack={handleBackFromReader}
+            onChapterChange={navigateToReader}
           />
         {/if}
       </div>

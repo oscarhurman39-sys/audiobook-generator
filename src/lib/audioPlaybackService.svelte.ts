@@ -11,6 +11,15 @@ import type { AudioSegment } from './types/audio'
 import { selectPiperVoiceForLanguage, normalizeLanguageCode } from './utils/voiceSelector'
 import { getGeneratedSegment, markSegmentGenerated } from '../stores/segmentProgressStore'
 import { handleModelProgress, clearModelProgress } from '../stores/modelDownloadStore'
+import { book } from '../stores/bookStore'
+import { appSettings } from '../stores/appSettingsStore'
+import {
+  setMediaMetadata,
+  setMediaPlaybackState,
+  setMediaPositionState,
+  registerMediaHandlers,
+  clearMediaSession,
+} from './services/mediaSessionService'
 
 interface TextSegment {
   index: number
@@ -40,6 +49,8 @@ class AudioPlaybackService {
   private bufferTarget = 5
   private chapterAudioUrl: string | null = null // Track chapter audio URL for cleanup
   private isLoadingChapter = false // Guard against concurrent loadChapter calls
+  private lastMediaPositionSecond = -1 // Throttle Media Session position updates to 1 Hz
+  private chapterEndHandler: (() => void) | null = null
 
   // Configuration
   private voice = ''
@@ -62,8 +73,10 @@ class AudioPlaybackService {
       $effect(() => {
         if (this.isPlaying) {
           audioPlayerStore.play()
+          setMediaPlaybackState('playing')
         } else {
           audioPlayerStore.pause()
+          setMediaPlaybackState('paused')
         }
       })
     })
@@ -160,6 +173,8 @@ class AudioPlaybackService {
       options?.startMinimized ?? false
     )
 
+    this.setupMediaSession(bookTitle, chapter)
+
     // If we have a starting segment index, ensure it's generated (if not already loaded) and create audio element
     if (options?.startSegmentIndex !== undefined) {
       const index = options.startSegmentIndex
@@ -196,6 +211,7 @@ class AudioPlaybackService {
           }
           this.audio.ontimeupdate = () => {
             if (this.audio) this.currentTime = this.audio.currentTime
+            this.updateMediaSessionPosition()
           }
           this.audio.onended = () => {
             // No-op: we don't auto-play here
@@ -411,11 +427,14 @@ class AudioPlaybackService {
         if (seg && seg.index !== this.currentSegmentIndex) {
           this.currentSegmentIndex = seg.index
         }
+
+        this.updateMediaSessionPosition()
       }
 
       this.audio.onended = () => {
         this.isPlaying = false
         audioPlayerStore.pause()
+        this.notifyChapterEnd()
       }
 
       this.audio.onerror = (e) => {
@@ -451,6 +470,8 @@ class AudioPlaybackService {
       false
     )
 
+    this.setupMediaSession(bookTitle, chapter)
+
     return { success: true, hasAudio }
   }
 
@@ -462,6 +483,8 @@ class AudioPlaybackService {
     if (this.audio) {
       this.isPlaying = true
       audioPlayerStore.play()
+      setMediaPlaybackState('playing')
+      this.updateMediaSessionPosition(true)
       try {
         await this.audio.play()
       } catch (e) {
@@ -482,6 +505,7 @@ class AudioPlaybackService {
     if (this.currentSegmentIndex >= 0) {
       this.isPlaying = true
       audioPlayerStore.play()
+      setMediaPlaybackState('playing')
       await this.playCurrentSegment()
     } else {
       await this.playFromSegment(0)
@@ -491,9 +515,11 @@ class AudioPlaybackService {
   pause() {
     this.isPlaying = false
     audioPlayerStore.pause()
+    setMediaPlaybackState('paused')
 
     if (this.audio) {
       this.audio.pause()
+      this.updateMediaSessionPosition(true)
     }
     // Note: We intentionally do NOT call worker.cancelAll() here anymore
     // because that would cancel ongoing chapter generation from generationService.
@@ -621,6 +647,7 @@ class AudioPlaybackService {
       this.audio.playbackRate = speed
     }
     audioPlayerStore.setPlaybackSpeed(speed)
+    this.updateMediaSessionPosition(true)
   }
 
   stop() {
@@ -652,6 +679,9 @@ class AudioPlaybackService {
     this.wordsMeasured = 0
     this.webSpeechUtteranceCount = 0
     audioPlayerStore.setChapterDuration(0)
+
+    this.lastMediaPositionSecond = -1
+    clearMediaSession()
   }
 
   getCurrentModel(): 'kokoro' | 'piper' | 'web_speech' {
@@ -664,6 +694,100 @@ class AudioPlaybackService {
 
   getVoice(): string {
     return this.voice
+  }
+
+  /**
+   * Publish this chapter to the OS media session and wire the transport
+   * controls, so the lock screen, notification shade and Bluetooth buttons all
+   * drive playback.
+   */
+  private setupMediaSession(bookTitle: string, chapter: Chapter) {
+    const currentBook = get(book)
+
+    setMediaMetadata({
+      title: chapter.title || 'Chapter',
+      album: bookTitle,
+      artist: currentBook?.author || '',
+      artwork: currentBook?.cover,
+    })
+
+    registerMediaHandlers(
+      {
+        play: () => void this.play(),
+        pause: () => this.pause(),
+        stop: () => this.stop(),
+        seekBackward: (offset) => this.skip(-offset),
+        seekForward: (offset) => this.skip(offset),
+        previousTrack: () => void this.skipPrevious(),
+        nextTrack: () => void this.skipNext(),
+        seekTo: (time) => this.seekTo(time),
+      },
+      // Lock-screen jumps match the size configured in the app.
+      get(appSettings).playback.skipSeconds
+    )
+
+    this.lastMediaPositionSecond = -1
+    this.updateMediaSessionPosition(true)
+  }
+
+  /**
+   * Push the scrub-bar position to the OS.
+   *
+   * Note the scope this reports: in merged-audio mode the element holds the
+   * whole chapter, so the OS shows chapter position. In per-segment mode the
+   * element holds one sentence, so the OS shows position within that sentence.
+   * Reporting segment-scoped position is still better than reporting none —
+   * the controls and metadata work either way.
+   *
+   * Throttled to once a second; `timeupdate` fires roughly four times that.
+   */
+  private updateMediaSessionPosition(force = false) {
+    if (!this.audio) {
+      setMediaPositionState(null)
+      return
+    }
+
+    const second = Math.floor(this.audio.currentTime)
+    if (!force && second === this.lastMediaPositionSecond) return
+    this.lastMediaPositionSecond = second
+
+    setMediaPositionState({
+      duration: this.audio.duration,
+      position: this.audio.currentTime,
+      playbackRate: this.playbackSpeed,
+    })
+  }
+
+  /**
+   * Register what happens when a chapter finishes playing.
+   *
+   * The service deliberately knows nothing about books or chapter order — the
+   * reader owns that — so continuing into the next chapter is a callback rather
+   * than something decided here.
+   */
+  setChapterEndHandler(handler: (() => void) | null) {
+    this.chapterEndHandler = handler
+  }
+
+  private notifyChapterEnd() {
+    const handler = this.chapterEndHandler
+    if (!handler) return
+    try {
+      handler()
+    } catch (err) {
+      logger.error('[AudioPlayback] Chapter end handler failed', err)
+    }
+  }
+
+  /**
+   * Absolute seek within the currently loaded media, used by the OS scrub bar.
+   * Scope matches `updateMediaSessionPosition` above.
+   */
+  seekTo(time: number) {
+    if (!this.audio) return
+    const duration = this.audio.duration || 0
+    this.audio.currentTime = Math.max(0, Math.min(duration, time))
+    this.updateMediaSessionPosition(true)
   }
 
   skip(seconds: number) {
@@ -800,6 +924,7 @@ class AudioPlaybackService {
       // Update time during playback
       this.audio.ontimeupdate = () => {
         if (this.audio) this.currentTime = this.audio.currentTime
+        this.updateMediaSessionPosition()
       }
 
       this.audio.onended = () => {
@@ -833,9 +958,11 @@ class AudioPlaybackService {
           this.cleanupOldSegments()
           this.playCurrentSegment()
         } else {
+          const reachedChapterEnd = nextIndex >= this.segments.length
           this.isPlaying = false
           audioPlayerStore.pause()
           this.disposeAudio()
+          if (reachedChapterEnd) this.notifyChapterEnd()
         }
       }
 
@@ -1205,6 +1332,7 @@ class AudioPlaybackService {
 
     this.audio.ontimeupdate = () => {
       if (this.audio) this.currentTime = this.audio.currentTime
+      this.updateMediaSessionPosition()
     }
 
     // Chain to next available segment when current one ends
@@ -1227,14 +1355,19 @@ class AudioPlaybackService {
           audioPlayerStore.pause()
         })
       } else {
-        // No next segment available yet — stop and let auto-play re-trigger
-        // when the next segment is generated
+        // No next segment available. Mid-chapter that just means generation
+        // hasn't caught up — stop and let auto-play re-trigger when the next
+        // segment lands. Only when this was the chapter's last segment is it a
+        // real chapter end; with no segment list loaded we can't tell, so we
+        // stay quiet rather than fire a false end.
+        const reachedChapterEnd = this.segments.length > 0 && nextIndex >= this.segments.length
         logger.info(`[Progressive] No next segment available at index ${nextIndex}, pausing`)
         this.isPlaying = false
         audioPlayerStore.pause()
         URL.revokeObjectURL(url)
         this.audioSegments.delete(segment.index)
         this.audio = null
+        if (reachedChapterEnd) this.notifyChapterEnd()
       }
     }
 

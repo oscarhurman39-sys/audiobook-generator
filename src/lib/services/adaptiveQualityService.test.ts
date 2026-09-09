@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { resolveTierLadder, getTierConfig, cancelUpgrade } from './adaptiveQualityService'
+import {
+  resolveTierLadder,
+  getTierConfig,
+  cancelUpgrade,
+  DEFAULT_KOKORO_VOICE,
+} from './adaptiveQualityService'
 import type { PiperVoice } from '../piper/piperClient'
 
 vi.mock('../utils/resourceMonitor', () => ({
@@ -110,5 +115,97 @@ describe('getTierConfig', () => {
 describe('cancelUpgrade', () => {
   it('does not throw when cancelling non-existent chapter', () => {
     expect(() => cancelUpgrade('non-existent-chapter')).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Voice preservation across quality tiers
+//
+// The tier ladder is a *quality* ladder. Upgrading a segment must never change
+// who is reading it — a bug that silently replaced every British voice choice
+// with af_heart, because the Kokoro tiers hard-coded that voice.
+// ---------------------------------------------------------------------------
+
+describe('resolveTierLadder — chosen voice is preserved', () => {
+  const britishVoices = ['bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily'] as const
+  const britishMaleVoices = ['bm_george', 'bm_lewis', 'bm_daniel', 'bm_fable'] as const
+
+  it.each([...britishVoices, ...britishMaleVoices])(
+    'carries %s across every Kokoro tier',
+    (voice) => {
+      const ladder = resolveTierLadder('en', [], voice)
+
+      const kokoroTiers = ladder.tiers.filter((t) => t?.model === 'kokoro')
+      expect(kokoroTiers).toHaveLength(3)
+      for (const tier of kokoroTiers) {
+        expect(tier?.voice).toBe(voice)
+      }
+    }
+  )
+
+  it('still varies quantization across the tiers', () => {
+    const ladder = resolveTierLadder('en', [], 'bm_george')
+
+    expect(ladder.tiers[1]).toMatchObject({ voice: 'bm_george', quantization: 'q4' })
+    expect(ladder.tiers[2]).toMatchObject({ voice: 'bm_george', quantization: 'q8' })
+    expect(ladder.tiers[3]).toMatchObject({ voice: 'bm_george', quantization: 'fp16' })
+  })
+
+  it('falls back to the default voice when none is chosen', () => {
+    const ladder = resolveTierLadder('en', [])
+
+    expect(ladder.tiers[1]).toMatchObject({ voice: DEFAULT_KOKORO_VOICE })
+    expect(ladder.tiers[3]).toMatchObject({ voice: DEFAULT_KOKORO_VOICE })
+  })
+
+  it('ignores a voice that is not a real Kokoro voice', () => {
+    const ladder = resolveTierLadder('en', [], 'not_a_voice')
+
+    expect(ladder.tiers[1]).toMatchObject({ voice: DEFAULT_KOKORO_VOICE })
+  })
+
+  it('ignores a Piper voice key on the Kokoro ladder', () => {
+    const ladder = resolveTierLadder('en', [], 'en_GB-alan-medium')
+
+    expect(ladder.tiers[1]).toMatchObject({ voice: DEFAULT_KOKORO_VOICE })
+  })
+
+  it('reaches getTierConfig too', () => {
+    const config = getTierConfig(2, 'en', [], 'bf_emma')
+
+    expect(config).toMatchObject({ model: 'kokoro', voice: 'bf_emma', quantization: 'q8' })
+  })
+
+  describe('Piper', () => {
+    const piperVoices = [
+      { key: 'de_DE-low', name: 'Low', language: 'de', quality: 'low' as const },
+      { key: 'de_DE-medium', name: 'Medium', language: 'de', quality: 'medium' as const },
+      { key: 'de_DE-high', name: 'High', language: 'de', quality: 'high' as const },
+    ]
+
+    it('pins the ladder to an explicitly chosen voice so no upgrade replaces it', () => {
+      const ladder = resolveTierLadder('de', piperVoices, 'de_DE-medium')
+
+      expect(ladder.tiers[1]).toBeNull()
+      expect(ladder.tiers[2]).toMatchObject({ model: 'piper', voice: 'de_DE-medium' })
+      expect(ladder.tiers[3]).toBeNull()
+      expect(ladder.maxAvailableTier).toBe(2)
+    })
+
+    it('keeps the full quality ladder when no voice is chosen', () => {
+      const ladder = resolveTierLadder('de', piperVoices)
+
+      expect(ladder.tiers[1]).toMatchObject({ voice: 'de_DE-low' })
+      expect(ladder.tiers[2]).toMatchObject({ voice: 'de_DE-medium' })
+      expect(ladder.tiers[3]).toMatchObject({ voice: 'de_DE-high' })
+      expect(ladder.maxAvailableTier).toBe(3)
+    })
+
+    it('ignores a chosen voice from another language', () => {
+      const ladder = resolveTierLadder('de', piperVoices, 'fr_FR-medium')
+
+      expect(ladder.tiers[1]).toMatchObject({ voice: 'de_DE-low' })
+      expect(ladder.maxAvailableTier).toBe(3)
+    })
   })
 })

@@ -498,6 +498,45 @@ export async function updateChapterVoice(
 }
 
 /**
+ * Set the voice for every chapter of a book.
+ *
+ * There is no book-level voice field — overrides live on chapters — so "use
+ * this voice for this book" means writing it to all of them, in one
+ * transaction so a book can never end up half in one narrator's voice.
+ */
+export async function setBookVoice(bookId: number, voice: string | undefined): Promise<void> {
+  const db = await openDB()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.get(bookId)
+
+    request.onsuccess = () => {
+      const book = request.result as LibraryBook
+      if (!book) {
+        reject(new Error('Book not found'))
+        return
+      }
+
+      book.chapters = book.chapters.map((chapter) => ({ ...chapter, voice }))
+
+      const putRequest = store.put(book)
+      putRequest.onsuccess = () => resolve()
+      putRequest.onerror = (event) =>
+        reject(
+          new Error(
+            `Failed to save book voice: ${(event.target as IDBRequest)?.error?.message || 'Unknown error'}`
+          )
+        )
+    }
+
+    request.onerror = () => reject(new Error('Failed to get book for updating voice'))
+    transaction.oncomplete = () => db.close()
+  })
+}
+
+/**
  * Delete a book from the library
  */
 export async function deleteBook(id: number): Promise<void> {

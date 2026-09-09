@@ -35,7 +35,7 @@ Quick environment notes
 Known issues
 
 - **prettier-plugin-svelte@4.0.0** crashes on `{@const}` directives containing `LogicalExpression` (`??`) or `CallExpression` (function calls). Affected files are listed in `.prettierignore`.
-- **`pnpm build`** and **`pnpm type-check`** currently fail due to a `vite.config.ts` `manualChunks` type incompatibility with rolldown. This is pre-existing and unrelated to feature work.
+- ~~`pnpm build` and `pnpm type-check` fail due to a `vite.config.ts` `manualChunks` type incompatibility with rolldown.~~ No longer true — both pass. Treat them as required gates.
 - ESLint reports ~100+ `@typescript-eslint/no-explicit-any` **warnings** (not errors). These are intentional in test files, mocks, and FFmpeg/worker code.
 
 Workflow: git worktree + branch (recommended for multi-agent)
@@ -95,7 +95,8 @@ Before pushing (checklist)
 2. `pnpm test` — all unit tests pass
 3. `git diff --stat` — review what you're committing
 
-Note: `pnpm type-check` and `pnpm build` have pre-existing failures (see Known issues). Don't block on them.
+4. `pnpm type-check` — must pass
+5. `pnpm build` — must pass
 
 Using `gh` CLI (preferred) for GitHub interactions
 
