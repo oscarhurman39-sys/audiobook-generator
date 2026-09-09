@@ -4,13 +4,17 @@ One next action per project. Phone-sized, concrete, binary.
 
 ## audiobook-generator [active]
 
-brick: Open a PR from `claude/new-session-26dft1` into `main` and merge it — the 13 commits of phone-first work (media session, sleep timer, voice audition, Android APK CI) are stranded off main until then.
+brick: Install `audiobook-debug.apk` from https://github.com/oscarhurman39-sys/audiobook-generator/releases/tag/android-latest on your phone, play one chapter with the screen off, and note whether lock-screen controls and screen-off playback work.
 since: 2026-09-09 sessions-unchanged: 0
 
 Notes (verified 2026-09-09):
 
-- `main` is pure upstream (Cabeda/audiobook-generator @ c35ff89). Zero commits by Oscar on main.
-- `claude/new-session-26dft1` = main + 13 commits. Lint, type-check, 762 unit tests, build, and 15 browser smoke tests all pass.
-- Debug APK built by CI from that branch: Actions artifact `audiobook-debug-apk` (expires 2026-09-24). No GitHub release exists; the `android-latest` release only refreshes on pushes to main.
-- No hosted deployment of the fork (GitHub Pages off), so the "PWA install" route does not exist yet.
-- [Unverified] behaviour on a real Android phone: screen-off playback, lock-screen controls, WebView performance.
+- Shipped: PR #1 merged the 13 phone-first commits into `main`; release workflow tagged `v0.32.0`; Android workflow published the `android-latest` pre-release with the APK (debug build, ~25.7 MB).
+- CI (lint, type-check, unit tests) is green on `main`.
+- E2E Smoke Tests workflow is red on `main`: the generation-and-export test fails on the runner and the job's 5-minute cap cancels it before artifacts upload. Not touched by PR #1; proposed workflow patch is in the PR #1 comment. Fix separately.
+- No hosted deployment of the fork (GitHub Pages off), so the "PWA install" route still does not exist; the APK is the install route.
+- [Unverified] behaviour on a real Android phone: screen-off playback, lock-screen controls, WebView performance. That is what the brick tests.
+
+## Done
+
+- 2026-09-09 — Open a PR from `claude/new-session-26dft1` into `main` and merge it. Shipped as PR #1.
